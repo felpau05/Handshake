@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>ASL — Train MLP</title>
+    <style>
+      :root { color-scheme: dark; }
+      body { margin: 0; font-family: system-ui, sans-serif; background: #111; color: #eee; padding: 24px; max-width: 820px; }
+      h1 { font-size: 20px; }
+      button { background: #2b6cb0; color: #fff; border: 0; padding: 10px 16px; border-radius: 6px; cursor: pointer; font-size: 14px; margin-right: 8px; }
+      button:disabled { opacity: 0.4; cursor: default; }
+      pre { background: #1a1a1a; padding: 12px; border-radius: 8px; overflow: auto; font-size: 13px; line-height: 1.5; max-height: 380px; }
+      .step { margin: 18px 0; }
+      code { background: #222; padding: 1px 5px; border-radius: 4px; }
+      .ok { color: #9ae6b4; } .warn { color: #f6ad55; }
+    </style>
+  </head>
+  <body>
+    <h1>ASL fingerspelling — train the classifier</h1>
+    <div class="step">
+      <b>1.</b> Load one or more <code>landmarks.json</code> files (dataset import + your own
+      collected samples merge together):
+      <input type="file" id="file" accept="application/json" multiple />
+      <span id="loaded"></span>
+    </div>
+    <div class="step">
+      <b>2.</b> <button id="train" disabled>Train MLP</button>
+      <span id="trainStatus"></span>
+    </div>
+    <div class="step">
+      <b>3.</b> <button id="save" disabled>Download model.json + weights.bin + labels.json</button>
+      <div class="warn">Move all three files into <code>asl/model/</code> when done.</div>
+    </div>
+    <pre id="log">Waiting for data…</pre>
+    <script type="module" src="./train.ts"></script>
+  </body>
+</html>

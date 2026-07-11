@@ -16,5 +16,20 @@ secrets/
 # Local test audio output.
 server/scripts/output/
 
+# ASL detector: collected training data (raw landmark dumps) stays local.
+asl/data/
+
+# ASL detector: dataset, python venv, and the auto-downloadable MediaPipe base
+# model stay out of git. The trained model (model.json/weights/labels) IS committed.
+archive/
+archive.zip
+asl/venv/
+asl/model/hand_landmarker.task
+*Zone.Identifier
+
 # Teammate's separate clone — its own git repo, out of scope for this project.
 CU-Hackathon-2026/
+
+# Python bytecode
+__pycache__/
+*.pyc

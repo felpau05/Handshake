@@ -1,0 +1,4 @@
+# Dev-only dep for the dataset importer (tools/dataset_import.py).
+# Uses the MediaPipe Tasks API (mp.tasks) + mp.Image.create_from_file — no OpenCV
+# needed. Camera-free batch job, so this runs fine under WSL2.
+mediapipe>=0.10
