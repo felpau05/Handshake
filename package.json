@@ -6,14 +6,15 @@
   "type": "module",
   "workspaces": [
     "shared",
+    "asl-detector",
     "server",
     "client"
   ],
   "scripts": {
     "dev": "concurrently -n server,client -c blue,magenta \"npm -w server run dev\" \"npm -w client run dev\"",
-    "build": "npm -w shared run build && npm -w client run build && npm -w server run build",
+    "build": "npm -w client run build",
     "start": "npm -w server run start",
-    "typecheck": "npm -w shared run typecheck && npm -w server run typecheck && npm -w client run typecheck",
+    "typecheck": "npm -w shared run typecheck && npm -w @cuhack/asl-detector run typecheck && npm -w server run typecheck && npm -w client run typecheck",
     "test": "npm -w server run test"
   },
   "devDependencies": {

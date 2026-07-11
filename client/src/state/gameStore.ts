@@ -1,13 +1,13 @@
 // Client-side mirror of the server's authoritative state. The store never
-// mutates game logic — it just holds the latest server-pushed MatchState plus a
-// little local UI state (my identity, latest narration/result). Components read
-// from here; hooks write to it as socket events arrive.
+// mutates game logic — it holds the latest server-pushed MatchState plus a little
+// local UI state (my identity, latest result/narration). Components read from
+// here; hooks write to it as socket events arrive.
 import { create } from 'zustand';
 import type {
   LeaderboardEntry,
   MatchState,
+  MatchResult,
   PlayerSlot,
-  RoundResult,
 } from '@app/shared';
 
 interface GameStore {
@@ -18,15 +18,15 @@ interface GameStore {
 
   // server-pushed state
   match: MatchState | null;
-  lastResult: RoundResult | null;
+  lastResult: MatchResult | null;
   narration: { text: string; audioUrl: string | null } | null;
   leaderboard: LeaderboardEntry[];
   error: string | null;
 
-  // actions (setters used by hooks)
+  // actions
   setIdentity: (roomCode: string, playerId: string, mySlot: PlayerSlot) => void;
   setMatch: (match: MatchState) => void;
-  setLastResult: (result: RoundResult) => void;
+  setLastResult: (result: MatchResult) => void;
   setNarration: (text: string, audioUrl: string | null) => void;
   setLeaderboard: (entries: LeaderboardEntry[]) => void;
   setError: (message: string | null) => void;

@@ -141,6 +141,20 @@ input {
   text-transform: capitalize;
 }
 
+.word-display {
+  margin-top: 0.75rem;
+  padding: 0.75rem 1rem;
+  border-radius: 12px;
+  background: #0f1120;
+  border: 1px solid #333858;
+  font-size: 2rem;
+  font-weight: 800;
+  letter-spacing: 6px;
+  text-transform: uppercase;
+  min-height: 3rem;
+  text-align: center;
+}
+
 .gesture-buttons {
   display: flex;
   gap: 0.75rem;

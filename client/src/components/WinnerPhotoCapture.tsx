@@ -39,7 +39,8 @@ export function WinnerPhotoCapture({ isWinner, onProcessed }: Props) {
           playerId: me.playerId,
           displayName: me.displayName,
           photo,
-          deltaCoins: me.coins, // final coin total as the match reward
+          // Coins/win-loss are already settled server-side at MATCH_END; this
+          // request only attaches the AI portrait as the avatar.
         }),
       });
       const data: { avatarUrl: string } = await res.json();

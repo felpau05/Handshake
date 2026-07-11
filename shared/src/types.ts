@@ -1,50 +1,22 @@
 // ─────────────────────────────────────────────────────────────────────────────
-// Shared contract between client and server.
+// Shared contract between client and server for ASL Word Battle.
 // Both workspaces import these types so the socket protocol and game state stay
 // in sync. Keep this file dependency-free (pure types + small const objects).
+// The ASL letter recognition itself lives in @cuhack/asl-detector (client-only);
+// the server only ever sees the final assembled word string.
 // ─────────────────────────────────────────────────────────────────────────────
-
-/** The base Rock-Paper-Scissors moves. Extend here to add variant moves. */
-export type Move = 'rock' | 'paper' | 'scissors';
-
-export const MOVES: readonly Move[] = ['rock', 'paper', 'scissors'] as const;
 
 /** Which player slot within a match. */
 export type PlayerSlot = 'p1' | 'p2';
 
-/** Phases of the authoritative GameRoom state machine. */
+/** Phases of the authoritative single-round GameRoom state machine. */
 export type GamePhase =
-  | 'LOBBY'
-  | 'SHOP'
-  | 'ROUND_INTRO'
-  | 'CAPTURE'
-  | 'RESOLVE'
-  | 'MATCH_END';
-
-/** Whitelisted balance twists Gemini may pick from (never free-form). */
-export type TwistId =
-  | 'DOUBLE_STAKES' // this round's coin swing is ±40 instead of ±20
-  | 'SUDDEN_DEATH' // loser of this round loses the match immediately
-  | 'MIRROR' // a tie awards both players the win
-  | 'UNDERDOG_BOOST'; // trailing player wins ties this round
-
-export const TWIST_IDS: readonly TwistId[] = [
-  'DOUBLE_STAKES',
-  'SUDDEN_DEATH',
-  'MIRROR',
-  'UNDERDOG_BOOST',
-] as const;
-
-/** A purchasable powerup. Catalog lives server-side in powerupCatalog.ts. */
-export interface Powerup {
-  id: string;
-  name: string;
-  description: string;
-  /** Cost in tokens (each player has 10 to spend before a match). */
-  cost: number;
-  /** If true, it's consumed after a single round; otherwise lasts the match. */
-  oneTimeUse: boolean;
-}
+  | 'LOBBY' // create/join, both ready up
+  | 'STAKE' // host sets the flat wager
+  | 'PROMPT' // Gemini reveals a prompt word
+  | 'SPELL' // both players fingerspell simultaneously (timed)
+  | 'RESOLVE' // Gemini validates words, longest valid wins
+  | 'MATCH_END'; // winner portrait, settle wager, leaderboard
 
 /** Per-player state the server tracks and broadcasts. */
 export interface PlayerState {
@@ -54,42 +26,46 @@ export interface PlayerState {
   displayName: string;
   connected: boolean;
   ready: boolean;
-  /** Coins are the score / trophy currency (starts at a configured baseline). */
-  coins: number;
-  /** Round wins this match (first to ceil(BEST_OF/2) wins the match). */
-  roundWins: number;
-  /** Tokens left in the pre-match shop (starts at 10). */
-  tokens: number;
-  /** Powerup ids the player owns for the current match. */
-  ownedPowerups: string[];
-  /** Move committed for the in-progress CAPTURE phase, if any. */
-  committedMove: Move | null;
+  /** Coins are the score currency; the flat wager is added/subtracted on win/loss. */
+  totalCoins: number;
+  /** Word submitted this round (null until submitted). */
+  submittedWord: string | null;
+  /** Gemini's verdict on the submitted word (null until resolved). */
+  wordValid: boolean | null;
 }
 
 /** Full match snapshot pushed to clients on every state change. */
 export interface MatchState {
   roomCode: string;
   phase: GamePhase;
-  round: number;
-  bestOf: number;
+  /** The current prompt word (e.g. "water"), or null before PROMPT. */
+  prompt: string | null;
+  /** Flat wager set before the match: winner +stake, loser -stake. */
+  stake: number;
   players: Record<PlayerSlot, PlayerState | null>;
-  /** Active balance twist for the current round, if any. */
-  activeTwist: TwistId | null;
-  /** ms epoch deadline for the current timed phase (SHOP / CAPTURE), if any. */
+  /** ms epoch deadline for the current timed phase (SPELL), if any. */
   phaseDeadline: number | null;
   /** Slot of the match winner once phase === 'MATCH_END'. */
   matchWinner: PlayerSlot | null;
+  /** True when the current prompt is a sudden-death tiebreaker. */
+  suddenDeath: boolean;
 }
 
-/** Result of a single resolved round (broadcast after RESOLVE). */
-export interface RoundResult {
-  round: number;
-  moves: Record<PlayerSlot, Move | null>;
-  /** null == tie. */
+/** Per-player word outcome in a resolved round. */
+export interface WordOutcome {
+  word: string;
+  valid: boolean;
+  /** Effective length used for comparison (0 when invalid). */
+  length: number;
+}
+
+/** Result of a resolved round (broadcast after RESOLVE). */
+export interface MatchResult {
+  /** Slot of the round winner, or null on a tie (→ sudden death). */
   winner: PlayerSlot | null;
-  /** Signed coin change applied to each player this round. */
-  coinsDelta: Record<PlayerSlot, number>;
-  twist: TwistId | null;
+  words: Record<PlayerSlot, WordOutcome>;
+  /** True when this resolution was a tie and a sudden-death prompt follows. */
+  suddenDeath: boolean;
   narrationText: string;
   /** Data/URL for ElevenLabs audio; null when voice is stubbed off. */
   narrationAudioUrl: string | null;
@@ -105,20 +81,23 @@ export interface LeaderboardEntry {
   losses: number;
 }
 
+/** Preset wager amounts offered in the STAKE phase (host may pick any). */
+export const STAKE_OPTIONS = [10, 20, 50] as const;
+
 // ── Socket protocol ──────────────────────────────────────────────────────────
-// Event name constants so client and server never disagree on strings.
 
 export const SocketEvents = {
   // client → server
   CREATE_MATCH: 'create_match',
   JOIN_MATCH: 'join_match',
   SET_READY: 'set_ready',
-  PURCHASE_POWERUPS: 'purchase_powerups',
-  GESTURE_SELECTED: 'gesture_selected',
+  SET_STAKE: 'set_stake',
+  SUBMIT_WORD: 'submit_word',
+  SPELL_PROGRESS: 'spell_progress', // optional: live word length for the opponent
 
   // server → client
   MATCH_STATE: 'match_state',
-  ROUND_RESULT: 'round_result',
+  MATCH_RESULT: 'match_result',
   NARRATION: 'narration',
   CAPTURE_WINNER_PHOTO: 'capture_winner_photo',
   LEADERBOARD_UPDATE: 'leaderboard_update',
@@ -139,15 +118,15 @@ export interface JoinMatchPayload {
 export interface SetReadyPayload {
   ready: boolean;
 }
-export interface PurchasePowerupsPayload {
-  powerupIds: string[];
+export interface SetStakePayload {
+  stake: number;
 }
-export interface GestureSelectedPayload {
-  move: Move;
-  /** Classifier confidence 0..1 (1 for keyboard/button fallback). */
-  confidence: number;
-  /** How the move was entered — useful for narration/debug. */
-  source: 'camera' | 'keyboard';
+export interface SubmitWordPayload {
+  word: string;
+}
+export interface SpellProgressPayload {
+  /** Current in-progress word length (letters only; the word itself stays local). */
+  length: number;
 }
 
 /** Server → client acknowledgement carrying the player's identity + room. */

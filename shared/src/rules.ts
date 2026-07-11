@@ -1,28 +1,33 @@
 // ─────────────────────────────────────────────────────────────────────────────
-// Canonical Rock-Paper-Scissors rules. Pure functions, no I/O — unit-testable
-// and imported by the server's RoundResolver. Keep game-balance logic (powerups,
-// twists) OUT of here; this file only knows the base win-matrix.
+// Pure ASL Word Battle rules. No I/O — unit-testable and shared by client and
+// server. Validity (real word + relates to prompt) is decided by Gemini on the
+// server; this file only turns two validated words into a winner by length.
 // ─────────────────────────────────────────────────────────────────────────────
 
-import type { Move } from './types.js';
+import type { PlayerSlot, WordOutcome } from './types.js';
 
-/** What each move beats. rock < paper < scissors < rock. */
-const BEATS: Record<Move, Move> = {
-  rock: 'scissors',
-  paper: 'rock',
-  scissors: 'paper',
-};
-
-/**
- * Compare two moves.
- * @returns 1 if `a` beats `b`, -1 if `b` beats `a`, 0 for a tie.
- */
-export function compareMoves(a: Move, b: Move): 1 | 0 | -1 {
-  if (a === b) return 0;
-  return BEATS[a] === b ? 1 : -1;
+/** Normalize a submitted word: trim, lowercase, letters only. */
+export function normalizeWord(word: string): string {
+  return word.trim().toLowerCase().replace(/[^a-z]/g, '');
 }
 
-/** True when `a` beats `b` outright. */
-export function beats(a: Move, b: Move): boolean {
-  return compareMoves(a, b) === 1;
+/** Effective comparison length: the word's letter count, or 0 if invalid. */
+export function effectiveLength(word: string, valid: boolean): number {
+  return valid ? normalizeWord(word).length : 0;
+}
+
+export interface BattleDecision {
+  /** Winner slot, or null when tied (both invalid, or equal valid length). */
+  winner: PlayerSlot | null;
+  /** True when the round is tied and a sudden-death prompt should follow. */
+  tie: boolean;
+}
+
+/**
+ * Decide a round from both players' validated words. The longer valid word wins.
+ * Equal effective lengths (including both-invalid = 0/0) is a tie → sudden death.
+ */
+export function decideBattle(p1: WordOutcome, p2: WordOutcome): BattleDecision {
+  if (p1.length === p2.length) return { winner: null, tie: true };
+  return { winner: p1.length > p2.length ? 'p1' : 'p2', tie: false };
 }

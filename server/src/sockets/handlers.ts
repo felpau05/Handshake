@@ -5,19 +5,20 @@ import type { Server, Socket } from 'socket.io';
 import {
   SocketEvents,
   type CreateMatchPayload,
-  type GestureSelectedPayload,
   type JoinMatchPayload,
   type JoinedAck,
   type PlayerSlot,
-  type PurchasePowerupsPayload,
   type SetReadyPayload,
+  type SetStakePayload,
+  type SubmitWordPayload,
 } from '@app/shared';
 import { GameRoom, type GameRoomCallbacks } from '../game/GameRoom.js';
 import { createRoom, getRoom, removeRoom } from '../game/rooms.js';
-import { narrateRound, proposeBalanceTwist } from '../services/gemini/geminiClient.js';
+import { announcePrompt, narrate } from '../services/gemini/geminiClient.js';
 import { textToSpeech } from '../services/elevenlabs/ttsClient.js';
 import { readAuthCookie, verifyAuthToken } from '../services/auth/jwt.js';
 import { ledger } from '../services/solana/ledger.js';
+import { upsertPlayerResult } from '../services/mongo/leaderboard.js';
 
 /**
  * A match is always tied to a logged-in account: playing requires a valid
@@ -63,19 +64,16 @@ export function registerSocketHandlers(io: Server): void {
     });
 
     socket.on(SocketEvents.SET_READY, (payload: SetReadyPayload) => {
-      const room = metaRoom(meta);
-      room?.setReady(meta!.slot, payload.ready);
+      metaRoom(meta)?.setReady(meta!.slot, payload.ready);
     });
 
-    socket.on(SocketEvents.PURCHASE_POWERUPS, (payload: PurchasePowerupsPayload) => {
-      const room = metaRoom(meta);
-      const res = room?.purchasePowerups(meta!.slot, payload.powerupIds ?? []);
-      if (res?.error) emitError(socket, 'PURCHASE_REJECTED', res.error);
+    socket.on(SocketEvents.SET_STAKE, (payload: SetStakePayload) => {
+      const res = metaRoom(meta)?.setStake(meta!.slot, payload.stake);
+      if (res?.error) emitError(socket, 'STAKE_REJECTED', res.error);
     });
 
-    socket.on(SocketEvents.GESTURE_SELECTED, (payload: GestureSelectedPayload) => {
-      const room = metaRoom(meta);
-      room?.commitMove(meta!.slot, payload.move);
+    socket.on(SocketEvents.SUBMIT_WORD, (payload: SubmitWordPayload) => {
+      metaRoom(meta)?.submitWord(meta!.slot, payload.word ?? '');
     });
 
     socket.on('disconnect', () => {
@@ -111,15 +109,31 @@ function makeCallbacks(io: Server, roomCode: string): GameRoomCallbacks {
   const room = () => io.to(roomCode);
   return {
     broadcastState: (state) => room().emit(SocketEvents.MATCH_STATE, state),
-    broadcastRoundResult: (result) => room().emit(SocketEvents.ROUND_RESULT, result),
+    broadcastResult: (result) => room().emit(SocketEvents.MATCH_RESULT, result),
     broadcastNarration: (text, audioUrl) =>
       room().emit(SocketEvents.NARRATION, { text, audioUrl }),
     requestWinnerPhoto: (playerId) =>
       room().emit(SocketEvents.CAPTURE_WINNER_PHOTO, { playerId }),
-    narrate: (ctx) => narrateRound(ctx),
+    narrate: (ctx) => narrate(ctx),
+    announcePrompt: (prompt, suddenDeath) => announcePrompt(prompt, suddenDeath),
     speak: (text) => textToSpeech(text),
-    proposeTwist: (state) => proposeBalanceTwist(state),
-    settleMatch: (settlement) => ledger.settleMatch(settlement),
+    // Settle the wager on Solana (escrow → winner) AND record both players on the
+    // leaderboard. Both are best-effort; a failure is logged, never thrown.
+    settleMatch: async (settlement) => {
+      await ledger
+        .settleMatch(settlement)
+        .catch((err) => console.error('[settle] ledger failed:', err));
+      await Promise.all(
+        settlement.results.map((r) =>
+          upsertPlayerResult({
+            playerId: r.playerId,
+            displayName: r.displayName,
+            deltaCoins: r.deltaCoins,
+            won: r.won,
+          }).catch((err) => console.error('[settle] leaderboard upsert failed:', err)),
+        ),
+      );
+    },
     collectEscrow: (matchId, playerIds) => ledger.collectEscrow(matchId, playerIds),
   };
 }
