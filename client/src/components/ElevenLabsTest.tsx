@@ -1,7 +1,8 @@
 // Standalone test panel for the ElevenLabs integration — proves TTS and music
 // generation work end to end through our server (the API key never reaches
-// the browser). Reached via a dev-only URL, not part of the LOBBY→SHOP→PLAY
-// flow — see main.tsx. Safe to delete once the integration is trusted.
+// the browser). Rendered as a floating overlay toggled from anywhere in the
+// app — see DevToolsToggle.tsx / main.tsx. Doesn't touch the game itself.
+// Safe to delete once the integration is trusted.
 import { useRef, useState } from 'react';
 
 type RequestState = 'idle' | 'loading' | 'error';
@@ -20,7 +21,7 @@ async function fetchAudio(url: string, body: unknown): Promise<Blob> {
   return res.blob();
 }
 
-export function ElevenLabsTest() {
+export function ElevenLabsTest({ onClose }: { onClose?: () => void }) {
   const [text, setText] = useState("Rock, paper, scissors — shoot! The gamemaster calls it!");
   const [ttsState, setTtsState] = useState<RequestState>('idle');
   const [ttsError, setTtsError] = useState<string | null>(null);
@@ -67,10 +68,17 @@ export function ElevenLabsTest() {
   }
 
   return (
-    <div className="app">
-      <h1 className="title">
-        ElevenLabs <span>test panel</span>
-      </h1>
+    <div>
+      <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center' }}>
+        <h1 className="title" style={{ fontSize: '1.4rem', margin: 0 }}>
+          ElevenLabs <span>test panel</span>
+        </h1>
+        {onClose && (
+          <button onClick={onClose} aria-label="Close" style={{ background: 'transparent', padding: '0.3rem 0.6rem' }}>
+            ✕
+          </button>
+        )}
+      </div>
       <p className="muted">
         Isolated dev panel — proves text-to-speech and music generation through the server.
         Doesn't touch the game.
