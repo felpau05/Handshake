@@ -10,9 +10,16 @@ import { env, features } from '../../config/env.js';
 const TTS_URL = (voiceId: string) =>
   `https://api.elevenlabs.io/v1/text-to-speech/${voiceId}`;
 
-/** Synthesize narration to a playable audio data URL, or null when stubbed. */
-export async function textToSpeech(text: string): Promise<string | null> {
-  if (!features.elevenlabs) return null;
+/**
+ * Raw TTS call shared by the in-game narrator (textToSpeech, below) and the
+ * standalone ElevenLabs test panel/script. Throws (with the upstream error
+ * text) on misconfiguration or API failure — the test panel wants that detail
+ * surfaced; textToSpeech() catches it to keep its own null-on-failure contract.
+ */
+export async function synthesizeSpeechBuffer(text: string): Promise<Buffer> {
+  if (!features.elevenlabs) {
+    throw new Error('ElevenLabs is not configured (missing ELEVENLABS_API_KEY / ELEVENLABS_VOICE_ID)');
+  }
 
   const res = await fetch(TTS_URL(env.ELEVENLABS_VOICE_ID!), {
     method: 'POST',
@@ -24,14 +31,25 @@ export async function textToSpeech(text: string): Promise<string | null> {
     body: JSON.stringify({
       text,
       model_id: 'eleven_flash_v2_5', // low-latency model for live narration
+      voice_settings: { stability: 0.5, similarity_boost: 0.75 },
     }),
   });
   if (!res.ok) {
-    console.warn('[elevenlabs] TTS failed:', res.status, await res.text());
+    const body = await res.text();
+    throw new Error(`ElevenLabs TTS failed (${res.status}): ${body}`);
+  }
+  return Buffer.from(await res.arrayBuffer());
+}
+
+/** Synthesize narration to a playable audio data URL, or null when stubbed/failed. */
+export async function textToSpeech(text: string): Promise<string | null> {
+  try {
+    const buf = await synthesizeSpeechBuffer(text);
+    return `data:audio/mpeg;base64,${buf.toString('base64')}`;
+  } catch (err) {
+    console.warn('[elevenlabs] TTS failed:', err);
     return null;
   }
-  const buf = Buffer.from(await res.arrayBuffer());
-  return `data:audio/mpeg;base64,${buf.toString('base64')}`;
 }
 
 /**

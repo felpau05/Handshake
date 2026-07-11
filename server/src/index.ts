@@ -12,6 +12,7 @@ import { env } from './config/env.js';
 import { registerSocketHandlers } from './sockets/handlers.js';
 import { leaderboardRouter } from './routes/leaderboard.js';
 import { photoRouter } from './routes/photo.js';
+import { elevenlabsTestRouter } from './routes/elevenlabsTest.js';
 import { connectMongo } from './services/mongo/connection.js';
 
 const app = express();
@@ -22,6 +23,7 @@ app.use(express.json({ limit: '15mb' }));
 app.get('/api/health', (_req, res) => res.json({ ok: true }));
 app.use('/api/leaderboard', leaderboardRouter);
 app.use('/api/photo', photoRouter);
+app.use('/api/test', elevenlabsTestRouter);
 
 // Serve the built client in production (single-origin deploy for two laptops).
 // Points at the client workspace's Vite build output (client/dist).
