@@ -1,0 +1,13 @@
+node_modules/
+dist/
+build/
+*.tsbuildinfo
+*.log
+.env
+.env.local
+server/.env
+server/public/
+.DS_Store
+
+# Teammate's separate clone — its own git repo, out of scope for this project.
+CU-Hackathon-2026/
