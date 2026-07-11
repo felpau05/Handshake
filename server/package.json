@@ -9,7 +9,8 @@
     "build": "tsc --noEmit",
     "start": "tsx src/index.ts",
     "typecheck": "tsc --noEmit",
-    "test": "node --import tsx --test src/**/*.test.ts"
+    "test": "node --import tsx --test src/**/*.test.ts",
+    "test:solana": "tsx scripts/testSolanaTransfer.ts"
   },
   "dependencies": {
     "@app/shared": "*",

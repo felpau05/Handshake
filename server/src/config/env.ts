@@ -25,7 +25,12 @@ const schema = z.object({
 
   USE_REAL_SOLANA: boolish,
   SOLANA_RPC_URL: z.string().default('https://api.devnet.solana.com'),
-  SOLANA_SERVER_SECRET_KEY: z.string().optional(),
+  /** Path to a Solana CLI-format keypair JSON file (array of 64 secret key bytes). Never commit this file. */
+  SOLANA_KEYPAIR_PATH: z.string().optional(),
+  /** SOL amount settled per match at MATCH_END. */
+  SOLANA_BET_SOL: z.coerce.number().default(0.1),
+  /** JSON map of playerId -> devnet wallet address, e.g. {"p1":"<base58>"}. Empty until real player wallets exist. */
+  SOLANA_PLAYER_WALLETS: z.string().optional(),
 });
 
 const parsed = schema.safeParse(process.env);
@@ -42,5 +47,5 @@ export const features = {
   elevenlabs: Boolean(env.ELEVENLABS_API_KEY && env.ELEVENLABS_VOICE_ID),
   imageGen: !env.STUB_IMAGE_GEN && Boolean(env.GEMINI_API_KEY),
   mongo: Boolean(env.MONGODB_URI),
-  solana: env.USE_REAL_SOLANA && Boolean(env.SOLANA_SERVER_SECRET_KEY),
+  solana: env.USE_REAL_SOLANA && Boolean(env.SOLANA_RPC_URL) && Boolean(env.SOLANA_KEYPAIR_PATH),
 };

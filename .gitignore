@@ -9,5 +9,9 @@ server/.env
 server/public/
 .DS_Store
 
+# Solana wallet keypairs — never commit secret keys.
+secrets/
+*-keypair.json
+
 # Teammate's separate clone — its own git repo, out of scope for this project.
 CU-Hackathon-2026/
