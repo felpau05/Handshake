@@ -23,14 +23,23 @@ const schema = z.object({
 
   MONGODB_URI: z.string().optional(),
 
+  /** Signs session JWTs. Falls back to an insecure dev default — set a real one before any real deploy. */
+  AUTH_JWT_SECRET: z.string().default('dev-insecure-secret-change-me'),
+
   USE_REAL_SOLANA: boolish,
   SOLANA_RPC_URL: z.string().default('https://api.devnet.solana.com'),
-  /** Path to a Solana CLI-format keypair JSON file (array of 64 secret key bytes). Never commit this file. */
+  /** Player 1 demo wallet keypair file (array of 64 secret key bytes). Never commit these files. */
   SOLANA_KEYPAIR_PATH: z.string().optional(),
+  /** Player 2 demo wallet keypair file. */
+  SOLANA_KEYPAIR_PATH2: z.string().optional(),
+  /** House/escrow wallet keypair file — holds the pot between match start and match end. */
+  SOLANA_KEYPAIR_PATH3: z.string().optional(),
   /** SOL amount settled per match at MATCH_END. */
   SOLANA_BET_SOL: z.coerce.number().default(0.1),
-  /** JSON map of playerId -> devnet wallet address, e.g. {"p1":"<base58>"}. Empty until real player wallets exist. */
-  SOLANA_PLAYER_WALLETS: z.string().optional(),
+  /** DEMO ONLY: JSON map of accountId -> keypair file path, for accounts whose
+   *  secret key we hold server-side so a match between two of them settles as
+   *  a real peer-to-peer transfer. Never do this for a real user's wallet. */
+  SOLANA_DEMO_KEYPAIRS: z.string().optional(),
 });
 
 const parsed = schema.safeParse(process.env);
@@ -41,11 +50,15 @@ if (!parsed.success) {
 
 export const env = parsed.data;
 
+if (env.AUTH_JWT_SECRET === 'dev-insecure-secret-change-me') {
+  console.warn('[env] AUTH_JWT_SECRET is unset — using an insecure dev default. Set it in server/.env before any real deploy.');
+}
+
 /** Handy booleans for "is this service wired for real?" */
 export const features = {
   gemini: Boolean(env.GEMINI_API_KEY),
   elevenlabs: Boolean(env.ELEVENLABS_API_KEY && env.ELEVENLABS_VOICE_ID),
   imageGen: !env.STUB_IMAGE_GEN && Boolean(env.GEMINI_API_KEY),
   mongo: Boolean(env.MONGODB_URI),
-  solana: env.USE_REAL_SOLANA && Boolean(env.SOLANA_RPC_URL) && Boolean(env.SOLANA_KEYPAIR_PATH),
+  solana: env.USE_REAL_SOLANA && Boolean(env.SOLANA_RPC_URL) && Boolean(env.SOLANA_KEYPAIR_PATH3),
 };

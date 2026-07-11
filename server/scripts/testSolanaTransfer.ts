@@ -1,6 +1,8 @@
 // Standalone proof that the devnet connect→sign→transfer→confirm path works,
-// without needing a second real player wallet: loads the funded server
-// wallet, generates a throwaway recipient keypair, and sends it 0.1 SOL.
+// without needing a second real player wallet: loads the wallet at
+// SOLANA_KEYPAIR_PATH (player 1's demo wallet — any funded keypair works for
+// this basic plumbing check), generates a throwaway recipient keypair, and
+// sends it 0.1 SOL.
 //
 // Run: npx tsx server/scripts/testSolanaTransfer.ts
 // Requires SOLANA_KEYPAIR_PATH (+ optionally SOLANA_RPC_URL, SOLANA_BET_SOL)

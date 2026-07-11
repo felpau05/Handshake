@@ -16,6 +16,19 @@ import { GameRoom, type GameRoomCallbacks } from '../game/GameRoom.js';
 import { createRoom, getRoom, removeRoom } from '../game/rooms.js';
 import { narrateRound, proposeBalanceTwist } from '../services/gemini/geminiClient.js';
 import { textToSpeech } from '../services/elevenlabs/ttsClient.js';
+import { readAuthCookie, verifyAuthToken } from '../services/auth/jwt.js';
+import { ledger } from '../services/solana/ledger.js';
+
+/**
+ * A match is always tied to a logged-in account: playing requires a valid
+ * session, and that account's stable id becomes the match's playerId (see
+ * GameRoom.addPlayer) so leaderboard stats + Solana wallet settlement persist
+ * across matches. The client never gets to assert its own identity here —
+ * only the verified session cookie does.
+ */
+function getAccountId(socket: Socket): string | null {
+  return verifyAuthToken(readAuthCookie(socket.handshake.headers.cookie));
+}
 
 /** Per-socket association so we can find the player's room + slot on any event. */
 interface SocketMeta {
@@ -29,17 +42,21 @@ export function registerSocketHandlers(io: Server): void {
     let meta: SocketMeta | null = null;
 
     socket.on(SocketEvents.CREATE_MATCH, async (payload: CreateMatchPayload, ack?: Function) => {
+      const accountId = getAccountId(socket);
+      if (!accountId) return emitError(socket, 'NOT_AUTHENTICATED', 'Log in before starting a match.');
       const room = createRoom((roomCode) => makeCallbacks(io, roomCode));
-      const joined = room.addPlayer(payload.displayName || 'Player 1');
+      const joined = room.addPlayer(payload.displayName || 'Player 1', accountId);
       if (!joined) return; // should never happen on a fresh room
       meta = bind(socket, room, joined.slot, joined.playerId);
       ackJoin(ack, { roomCode: room.roomCode, playerId: joined.playerId, slot: joined.slot });
     });
 
     socket.on(SocketEvents.JOIN_MATCH, async (payload: JoinMatchPayload, ack?: Function) => {
+      const accountId = getAccountId(socket);
+      if (!accountId) return emitError(socket, 'NOT_AUTHENTICATED', 'Log in before joining a match.');
       const room = getRoom(payload.roomCode);
       if (!room) return emitError(socket, 'ROOM_NOT_FOUND', 'No match with that code.');
-      const joined = room.addPlayer(payload.displayName || 'Player 2');
+      const joined = room.addPlayer(payload.displayName || 'Player 2', accountId);
       if (!joined) return emitError(socket, 'ROOM_FULL', 'That match is already full.');
       meta = bind(socket, room, joined.slot, joined.playerId);
       ackJoin(ack, { roomCode: room.roomCode, playerId: joined.playerId, slot: joined.slot });
@@ -102,5 +119,7 @@ function makeCallbacks(io: Server, roomCode: string): GameRoomCallbacks {
     narrate: (ctx) => narrateRound(ctx),
     speak: (text) => textToSpeech(text),
     proposeTwist: (state) => proposeBalanceTwist(state),
+    settleMatch: (settlement) => ledger.settleMatch(settlement),
+    collectEscrow: (matchId, playerIds) => ledger.collectEscrow(matchId, playerIds),
   };
 }

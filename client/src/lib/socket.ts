@@ -6,4 +6,7 @@ import { io, type Socket } from 'socket.io-client';
 export const socket: Socket = io({
   autoConnect: true,
   transports: ['websocket'],
+  // Sends the httpOnly auth cookie on the handshake so the server can tie a
+  // match to a logged-in account — see server/src/sockets/handlers.ts.
+  withCredentials: true,
 });

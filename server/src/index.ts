@@ -7,20 +7,26 @@ import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import express from 'express';
 import cors from 'cors';
+import cookieParser from 'cookie-parser';
 import { Server } from 'socket.io';
 import { env } from './config/env.js';
 import { registerSocketHandlers } from './sockets/handlers.js';
 import { leaderboardRouter } from './routes/leaderboard.js';
 import { photoRouter } from './routes/photo.js';
 import { elevenlabsTestRouter } from './routes/elevenlabsTest.js';
+import { authRouter } from './routes/auth.js';
 import { connectMongo } from './services/mongo/connection.js';
 
 const app = express();
-app.use(cors({ origin: env.CLIENT_ORIGIN }));
+// credentials: true + a matched Origin (not '*') is required for the browser
+// to send/receive the httpOnly auth cookie across the client's dev port.
+app.use(cors({ origin: env.CLIENT_ORIGIN, credentials: true }));
+app.use(cookieParser());
 // Winner photos are base64 data URLs — allow a generous JSON body.
 app.use(express.json({ limit: '15mb' }));
 
 app.get('/api/health', (_req, res) => res.json({ ok: true }));
+app.use('/api/auth', authRouter);
 app.use('/api/leaderboard', leaderboardRouter);
 app.use('/api/photo', photoRouter);
 app.use('/api/test', elevenlabsTestRouter);
@@ -41,7 +47,7 @@ app.get('*', (req, res, next) => {
 
 const httpServer = createServer(app);
 const io = new Server(httpServer, {
-  cors: { origin: env.CLIENT_ORIGIN, methods: ['GET', 'POST'] },
+  cors: { origin: env.CLIENT_ORIGIN, methods: ['GET', 'POST'], credentials: true },
 });
 registerSocketHandlers(io);
 

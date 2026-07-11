@@ -31,6 +31,14 @@ export interface RoundNarrationContext {
   players: Record<PlayerSlot, PlayerState | null>;
 }
 
+/** Match-end coin outcome per player — shape-compatible with (but decoupled
+ *  from) services/solana/ledger.ts's MatchSettlement, so GameRoom never has
+ *  to import anything Solana-specific. */
+export interface MatchSettlementInput {
+  matchId: string;
+  results: { playerId: string; deltaCoins: number; won: boolean }[];
+}
+
 /** Everything the room needs from the outside world. Injected, so tests can
  *  pass no-op stubs and production wires sockets + AI services. */
 export interface GameRoomCallbacks {
@@ -44,6 +52,13 @@ export interface GameRoomCallbacks {
   speak(text: string): Promise<string | null>;
   /** Gemini balance twist for the upcoming round (whitelisted enum or null). */
   proposeTwist(state: MatchState): Promise<TwistId | null>;
+  /** Coin/Solana settlement, fired once at MATCH_END. Must be best-effort on
+   *  the implementation's side — GameRoom fires it without blocking or
+   *  awaiting chain confirmation. */
+  settleMatch(settlement: MatchSettlementInput): Promise<void>;
+  /** Escrow deposit collection, fired once at match start (LOBBY → SHOP).
+   *  Same best-effort contract as settleMatch. */
+  collectEscrow(matchId: string, playerIds: string[]): Promise<void>;
 }
 
 export class GameRoom {
@@ -65,11 +80,16 @@ export class GameRoom {
 
   // ── Player membership ──────────────────────────────────────────────────────
 
-  /** Add a player to the first open slot. Returns their id + slot, or null if full. */
-  addPlayer(displayName: string): { playerId: string; slot: PlayerSlot } | null {
+  /**
+   * Add a player to the first open slot. Returns their id + slot, or null if full.
+   * `accountId`, when given (a logged-in user's stable id), is used as the
+   * playerId instead of a freshly minted one, so leaderboard stats and Solana
+   * wallet settlement key off the same id across every match that account plays.
+   */
+  addPlayer(displayName: string, accountId?: string): { playerId: string; slot: PlayerSlot } | null {
     const slot: PlayerSlot | null = !this.players.p1 ? 'p1' : !this.players.p2 ? 'p2' : null;
     if (!slot) return null;
-    const playerId = nanoid(10);
+    const playerId = accountId ?? nanoid(10);
     this.players[slot] = {
       slot,
       playerId,
@@ -129,6 +149,12 @@ export class GameRoom {
     }
     this.setPhase('SHOP', SHOP_DURATION_MS);
     this.armTimer(() => this.startNextRound(), SHOP_DURATION_MS);
+
+    // Fire-and-forget escrow collection — must never block or break the match.
+    const [p1, p2] = [this.players.p1!, this.players.p2!];
+    void this.cb
+      .collectEscrow(this.roomCode, [p1.playerId, p2.playerId])
+      .catch((err) => console.error(`[GameRoom ${this.roomCode}] collectEscrow failed:`, err));
   }
 
   purchasePowerups(slot: PlayerSlot, powerupIds: string[]): { error?: string } {
@@ -262,6 +288,20 @@ export class GameRoom {
     this.broadcast();
     const winnerPlayer = this.players[winner];
     if (winnerPlayer) this.cb.requestWinnerPhoto(winnerPlayer.playerId);
+
+    // Fire-and-forget: settlement (including any on-chain transfer) must never
+    // block match-end or crash the room on a chain/DB hiccup.
+    const p1 = this.players.p1!;
+    const p2 = this.players.p2!;
+    void this.cb
+      .settleMatch({
+        matchId: this.roomCode,
+        results: [
+          { playerId: p1.playerId, deltaCoins: p1.coins - STARTING_COINS, won: winner === 'p1' },
+          { playerId: p2.playerId, deltaCoins: p2.coins - STARTING_COINS, won: winner === 'p2' },
+        ],
+      })
+      .catch((err) => console.error(`[GameRoom ${this.roomCode}] settleMatch failed:`, err));
   }
 
   // ── State helpers ──────────────────────────────────────────────────────────
