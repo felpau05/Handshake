@@ -1,0 +1,25 @@
+{
+  "name": "cuhack2026-gamemaster-rps",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Gamemaster RPS — 2-laptop, camera-driven Rock-Paper-Scissors with a Gemini gamemaster, ElevenLabs voice, Solana coin ledger, and a MongoDB leaderboard.",
+  "type": "module",
+  "workspaces": [
+    "shared",
+    "server",
+    "client"
+  ],
+  "scripts": {
+    "dev": "concurrently -n server,client -c blue,magenta \"npm -w server run dev\" \"npm -w client run dev\"",
+    "build": "npm -w shared run build && npm -w client run build && npm -w server run build",
+    "start": "npm -w server run start",
+    "typecheck": "npm -w shared run typecheck && npm -w server run typecheck && npm -w client run typecheck",
+    "test": "npm -w server run test"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.0"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
