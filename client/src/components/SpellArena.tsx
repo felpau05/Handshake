@@ -1,5 +1,5 @@
 // SPELL phase UI. Owns everything the ASL detector does not: word assembly from
-// letter events, wave-to-delete (+ Backspace fallback), the countdown, and
+// letter events, delete (👎 gesture or Backspace), the countdown, and
 // submit. The detector is a black box that emits deduped LetterEvents; this
 // component turns them into a word and sends only the final string to the
 // server. The camera stream and the detector's model are both warmed once at
@@ -10,7 +10,6 @@ import { HandLandmarker, DrawingUtils } from '@mediapipe/tasks-vision';
 import type { LetterEvent } from '@app/asl';
 import type { LetterCapture } from '@app/shared';
 import { useMediaStore } from '../state/mediaStore.js';
-import { useWaveDelete } from '../hooks/useWaveDelete.js';
 import { submitWord, sendSpellProgress } from '../hooks/useSocket.js';
 import { useGameStore } from '../state/gameStore.js';
 
@@ -83,7 +82,7 @@ export function SpellArena() {
 
   // Keep captures aligned with the word: a grown word consumes the pending
   // detector capture (or records a capture-less keyboard letter); a shrunk
-  // word (wave/Backspace delete) drops the tail captures with it.
+  // word (👎/Backspace delete) drops the tail captures with it.
   useEffect(() => {
     const captures = capturesRef.current;
     while (word.length > captures.length) {
@@ -181,10 +180,6 @@ export function SpellArena() {
     };
   }, [detector, detectorReady, cameraStatus]);
 
-  // Wave-to-delete rides the shared detector's frame stream — no second
-  // MediaPipe instance, no shader compile at round start.
-  useWaveDelete(detector, cameraStatus === 'ready' && detectorReady, deleteLast);
-
   // Keyboard: Backspace deletes, letters type (fallback), Enter submits.
   useEffect(() => {
     if (submitted) return;
@@ -247,12 +242,20 @@ export function SpellArena() {
         <Countdown deadline={deadline} onExpire={() => doSubmitRef.current(true)} />
       </div>
 
-      <div className="camera-wrap">
-        <video ref={videoRef} playsInline muted />
-        <canvas ref={canvasRef} />
-        <div className="move-badge">
-          {tracking ? 'tracking ✓' : cameraStatus === 'ready' ? 'loading…' : cameraStatus}
-          <span ref={liveRef} />
+      {/* Camera and the ASL alphabet reference sit side by side on desktop so
+          the player can see themselves, how to sign each letter, and the word
+          they're building — all at once. */}
+      <div className="spell-layout">
+        <div className="camera-wrap">
+          <video ref={videoRef} playsInline muted />
+          <canvas ref={canvasRef} />
+          <div className="move-badge">
+            {tracking ? 'tracking ✓' : cameraStatus === 'ready' ? 'loading…' : cameraStatus}
+            <span ref={liveRef} />
+          </div>
+        </div>
+        <div className="alphabet-card">
+          <img src="/asl-alphabet.png" alt="ASL alphabet reference chart" />
         </div>
       </div>
 
@@ -262,12 +265,17 @@ export function SpellArena() {
         </button>
       )}
 
+      <div className="control-hints">
+        <span>👍 Thumbs up to submit</span>
+        <span>👎 Thumbs down to backspace</span>
+      </div>
+
       <div className="word-display">{word || <span className="muted">sign your word…</span>}</div>
 
       <div className="gesture-buttons">
-        <button onClick={deleteLast} disabled={submitted || submitting || !word}>⌫ Delete (wave / Backspace)</button>
+        <button onClick={deleteLast} disabled={submitted || submitting || !word}>👎 Backspace</button>
         <button className="primary" onClick={() => doSubmit()} disabled={submitted || submitting}>
-          {submitted ? 'Submitted ✓' : submitting ? 'Submitting…' : 'Submit word'}
+          {submitted ? 'Submitted ✓' : submitting ? 'Submitting…' : '👍 Submit word'}
         </button>
       </div>
       {submitError && (
@@ -275,8 +283,8 @@ export function SpellArena() {
       )}
 
       <p className="muted">
-        Hold a letter sign to add it; wave your hand or press Backspace to delete. No autocorrect —
-        spell a real word related to <strong>{prompt}</strong>. J and Z aren't supported.
+        Hold a letter sign to add it. No autocorrect — spell a real word related to{' '}
+        <strong>{prompt}</strong>.
       </p>
 
       <div className="grid-2" style={{ marginTop: '0.5rem' }}>

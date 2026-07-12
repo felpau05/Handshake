@@ -1,12 +1,25 @@
+/* ─────────────────────────────────────────────────────────────────────────────
+   Nebula Glass theme.
+   A deep-space starry sky, softly blurred behind textured glass, with frosted
+   "liquid glass" surfaces floating above it. Buttons read as 3D glass: layered
+   drop shadows lift them off the blurry background, inset highlights catch the
+   light on top. Design tokens follow the handoff doc:
+     bg #121317 · accent #00a3ff · surface rgba(255,255,255,.05)
+     surface-bright rgba(255,255,255,.1) · border rgba(255,255,255,.2)
+   ──────────────────────────────────────────────────────────────────────────── */
+
 :root {
-  --bg: #0d0f1a;
-  --panel: #171a2b;
-  --accent: #ffcf3f;
-  --accent-2: #6c5ce7;
+  --bg: #121317;
+  --accent: #00a3ff;
+  --accent-soft: rgba(0, 163, 255, 0.35);
+  --surface: rgba(255, 255, 255, 0.05);
+  --surface-bright: rgba(255, 255, 255, 0.1);
+  --border: rgba(255, 255, 255, 0.2);
+  --border-soft: rgba(255, 255, 255, 0.12);
   --win: #2ecc71;
   --lose: #e74c3c;
-  --text: #e8eaf2;
-  --muted: #8b8fa6;
+  --text: #ffffff;
+  --muted: rgba(255, 255, 255, 0.7);
   color-scheme: dark;
 }
 
@@ -17,9 +30,51 @@
 body {
   margin: 0;
   font-family: system-ui, -apple-system, 'Segoe UI', sans-serif;
-  background: radial-gradient(circle at 30% 0%, #1a1d33, var(--bg));
+  background: var(--bg);
   color: var(--text);
   min-height: 100vh;
+  position: relative;
+  overflow-x: hidden;
+}
+
+/* Starry night sky — three drifting star fields + two nebula glows, slightly
+   blurred so the glass panels above have something soft to refract. */
+body::before {
+  content: '';
+  position: fixed;
+  inset: -40px; /* bleed so the blur never shows a hard edge */
+  z-index: -2;
+  pointer-events: none;
+  background-image:
+    radial-gradient(ellipse 55% 40% at 20% 12%, rgba(0, 163, 255, 0.14), transparent 65%),
+    radial-gradient(ellipse 45% 38% at 82% 78%, rgba(108, 92, 231, 0.12), transparent 65%),
+    radial-gradient(1.6px 1.6px at 12% 22%, rgba(255, 255, 255, 0.9), transparent 55%),
+    radial-gradient(1.2px 1.2px at 31% 67%, rgba(255, 255, 255, 0.7), transparent 55%),
+    radial-gradient(2px 2px at 47% 15%, rgba(255, 255, 255, 0.85), transparent 55%),
+    radial-gradient(1.3px 1.3px at 58% 82%, rgba(255, 255, 255, 0.6), transparent 55%),
+    radial-gradient(1.7px 1.7px at 71% 39%, rgba(255, 255, 255, 0.85), transparent 55%),
+    radial-gradient(1.1px 1.1px at 84% 12%, rgba(255, 255, 255, 0.65), transparent 55%),
+    radial-gradient(2.2px 2.2px at 92% 58%, rgba(255, 255, 255, 0.8), transparent 55%),
+    radial-gradient(1.2px 1.2px at 8% 88%, rgba(255, 255, 255, 0.6), transparent 55%),
+    radial-gradient(1.5px 1.5px at 39% 42%, rgba(255, 255, 255, 0.75), transparent 55%),
+    radial-gradient(1px 1px at 65% 62%, rgba(255, 255, 255, 0.55), transparent 55%),
+    radial-gradient(1.8px 1.8px at 25% 92%, rgba(255, 255, 255, 0.7), transparent 55%),
+    radial-gradient(1px 1px at 53% 33%, rgba(255, 255, 255, 0.5), transparent 55%),
+    radial-gradient(1.4px 1.4px at 77% 88%, rgba(255, 255, 255, 0.65), transparent 55%),
+    radial-gradient(1px 1px at 95% 30%, rgba(255, 255, 255, 0.55), transparent 55%);
+  background-color: var(--bg);
+  filter: blur(1.6px);
+}
+
+/* Textured glass sheet over the sky: faint noise + a whisper of frost. */
+body::after {
+  content: '';
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.05'/%3E%3C/svg%3E");
+  background-color: rgba(255, 255, 255, 0.015);
 }
 
 .app {
@@ -37,52 +92,106 @@ h3 {
 .title {
   font-size: 2rem;
   letter-spacing: 0.5px;
+  text-shadow: 0 2px 24px rgba(0, 163, 255, 0.25);
 }
 .title span {
   color: var(--accent);
 }
 
+/* Frosted glass panel: blurred backdrop, edge highlight on top, lifted by a
+   deep soft shadow so it floats above the sky. */
 .panel {
-  background: var(--panel);
-  border: 1px solid #262a44;
-  border-radius: 14px;
+  background: var(--surface);
+  backdrop-filter: blur(20px) saturate(150%);
+  -webkit-backdrop-filter: blur(20px) saturate(150%);
+  border: 1px solid var(--border-soft);
+  border-radius: 20px;
   padding: 1.25rem;
   margin-bottom: 1rem;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.12),
+    0 24px 48px rgba(0, 0, 0, 0.45),
+    0 4px 12px rgba(0, 0, 0, 0.3);
 }
 
+/* Liquid glass buttons — translucent, lit from above, and distinctly 3D:
+   stacked drop shadows separate them from the blurred glass behind, and the
+   press states physically sink them. */
 button {
   font: inherit;
   cursor: pointer;
-  border: none;
-  border-radius: 10px;
-  padding: 0.6rem 1rem;
-  background: var(--accent-2);
-  color: white;
-  transition: transform 0.06s ease, filter 0.15s ease;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 0.65rem 1.1rem;
+  color: var(--text);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.14), rgba(255, 255, 255, 0.04));
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.28),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.2),
+    0 10px 22px rgba(0, 0, 0, 0.45),
+    0 2px 6px rgba(0, 0, 0, 0.35);
+  transition: transform 0.08s ease, box-shadow 0.12s ease, background 0.15s ease;
 }
 button:hover {
-  filter: brightness(1.1);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.2), rgba(255, 255, 255, 0.07));
+  transform: translateY(-1px);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.32),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.2),
+    0 14px 28px rgba(0, 0, 0, 0.5),
+    0 3px 8px rgba(0, 0, 0, 0.4);
 }
 button:active {
   transform: translateY(1px);
+  box-shadow:
+    inset 0 2px 6px rgba(0, 0, 0, 0.35),
+    0 4px 10px rgba(0, 0, 0, 0.35);
 }
 button:disabled {
-  opacity: 0.5;
+  opacity: 0.45;
   cursor: not-allowed;
+  transform: none;
 }
 button.primary {
-  background: var(--accent);
-  color: #1a1a1a;
+  border-color: rgba(0, 163, 255, 0.55);
+  background: linear-gradient(180deg, rgba(0, 163, 255, 0.85), rgba(0, 110, 190, 0.75));
+  color: #fff;
   font-weight: 700;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.4),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.25),
+    0 12px 28px var(--accent-soft),
+    0 3px 8px rgba(0, 0, 0, 0.4);
+}
+button.primary:hover {
+  background: linear-gradient(180deg, rgba(30, 175, 255, 0.95), rgba(0, 122, 210, 0.85));
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.45),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.25),
+    0 16px 36px rgba(0, 163, 255, 0.45),
+    0 4px 10px rgba(0, 0, 0, 0.45);
 }
 
 input {
   font: inherit;
-  padding: 0.55rem 0.7rem;
-  border-radius: 10px;
-  border: 1px solid #333858;
-  background: #0f1120;
+  padding: 0.6rem 0.8rem;
+  border-radius: 12px;
+  border: 1px solid var(--border-soft);
+  background: rgba(0, 0, 0, 0.35);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
   color: var(--text);
+  box-shadow: inset 0 2px 6px rgba(0, 0, 0, 0.35);
+}
+input:focus {
+  outline: none;
+  border-color: rgba(0, 163, 255, 0.6);
+  box-shadow:
+    inset 0 2px 6px rgba(0, 0, 0, 0.35),
+    0 0 0 3px rgba(0, 163, 255, 0.2);
 }
 
 .row {
@@ -110,6 +219,7 @@ input {
   letter-spacing: 6px;
   font-weight: 800;
   color: var(--accent);
+  text-shadow: 0 0 18px var(--accent-soft);
 }
 
 .camera-wrap {
@@ -117,8 +227,12 @@ input {
   width: 100%;
   aspect-ratio: 4 / 3;
   background: #000;
-  border-radius: 12px;
+  border-radius: 16px;
   overflow: hidden;
+  border: 1px solid var(--border-soft);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.1),
+    0 16px 32px rgba(0, 0, 0, 0.5);
 }
 .camera-wrap video,
 .camera-wrap canvas {
@@ -134,25 +248,90 @@ input {
   position: absolute;
   bottom: 10px;
   left: 10px;
-  background: rgba(0, 0, 0, 0.6);
+  background: rgba(0, 0, 0, 0.55);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  border: 1px solid var(--border-soft);
   padding: 0.4rem 0.8rem;
   border-radius: 999px;
   font-weight: 700;
   text-transform: capitalize;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+}
+
+/* SPELL screen layout: camera and alphabet reference side by side on desktop so
+   the player can see themselves, the chart, and the word box all at once. */
+.spell-layout {
+  display: grid;
+  grid-template-columns: 1.35fr 1fr;
+  gap: 1rem;
+  align-items: stretch;
+}
+@media (max-width: 900px) {
+  .spell-layout {
+    grid-template-columns: 1fr;
+  }
+}
+
+.alphabet-card {
+  position: relative;
+  min-height: 320px;
+  border-radius: 16px;
+  overflow: hidden;
+  background: rgba(255, 255, 255, 0.94);
+  border: 1px solid var(--border-soft);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.4),
+    0 16px 32px rgba(0, 0, 0, 0.5);
+}
+.alphabet-card img {
+  position: absolute;
+  inset: 4px;
+  width: calc(100% - 8px);
+  height: calc(100% - 8px);
+  object-fit: contain;
+}
+
+/* Evident, always-visible gesture instructions for delete/submit. */
+.control-hints {
+  display: flex;
+  gap: 0.75rem;
+  margin-top: 0.75rem;
+  flex-wrap: wrap;
+}
+.control-hints span {
+  flex: 1;
+  min-width: 200px;
+  text-align: center;
+  padding: 0.5rem 0.9rem;
+  border-radius: 999px;
+  font-weight: 700;
+  background: var(--surface-bright);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  border: 1px solid var(--border-soft);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.15),
+    0 6px 14px rgba(0, 0, 0, 0.35);
 }
 
 .word-display {
   margin-top: 0.75rem;
   padding: 0.75rem 1rem;
-  border-radius: 12px;
-  background: #0f1120;
-  border: 1px solid #333858;
+  border-radius: 16px;
+  background: rgba(0, 0, 0, 0.4);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  border: 1px solid var(--border);
   font-size: 2rem;
   font-weight: 800;
   letter-spacing: 6px;
   text-transform: uppercase;
   min-height: 3rem;
   text-align: center;
+  box-shadow:
+    inset 0 2px 8px rgba(0, 0, 0, 0.45),
+    0 1px 0 rgba(255, 255, 255, 0.08);
 }
 
 .gesture-buttons {
@@ -176,34 +355,20 @@ input {
   color: var(--lose);
 }
 
-.powerup {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: 0.5rem;
-  padding: 0.6rem 0.8rem;
-  border: 1px solid #2a2f4d;
-  border-radius: 10px;
-  margin-bottom: 0.5rem;
-}
-.powerup.owned {
-  border-color: var(--accent);
-  background: rgba(255, 207, 63, 0.08);
-}
-
 .leaderboard-row {
   display: flex;
   align-items: center;
   gap: 0.75rem;
   padding: 0.5rem 0;
-  border-bottom: 1px solid #23273f;
+  border-bottom: 1px solid var(--border-soft);
 }
 .leaderboard-row img {
   width: 42px;
   height: 42px;
-  border-radius: 10px;
+  border-radius: 12px;
   object-fit: cover;
-  background: #23273f;
+  background: var(--surface-bright);
+  border: 1px solid var(--border-soft);
 }
 
 .narration {
@@ -211,18 +376,26 @@ input {
   font-style: italic;
   color: var(--accent);
   min-height: 1.5em;
+  text-shadow: 0 0 16px rgba(0, 163, 255, 0.25);
 }
 
 .phase-pill {
   display: inline-block;
-  padding: 0.2rem 0.7rem;
+  padding: 0.25rem 0.75rem;
   border-radius: 999px;
-  background: var(--accent-2);
+  background: linear-gradient(180deg, rgba(0, 163, 255, 0.4), rgba(0, 110, 190, 0.3));
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  border: 1px solid rgba(0, 163, 255, 0.45);
   font-size: 0.8rem;
   letter-spacing: 1px;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.25),
+    0 4px 12px rgba(0, 0, 0, 0.35);
 }
 .countdown {
   font-size: 3rem;
   font-weight: 900;
   text-align: center;
+  text-shadow: 0 0 32px var(--accent-soft);
 }
