@@ -3,6 +3,7 @@
 // the token directly, only ever the public user profile.
 import { Router, type Request, type Response, type NextFunction } from 'express';
 import { z } from 'zod';
+import { PublicKey, LAMPORTS_PER_SOL } from '@solana/web3.js';
 import { AUTH_COOKIE_NAME, signAuthToken, verifyAuthToken } from '../services/auth/jwt.js';
 import { verifyPassword } from '../services/auth/passwords.js';
 import {
@@ -13,6 +14,7 @@ import {
   registerUser,
   updateWalletAddress,
 } from '../services/auth/userStore.js';
+import { getConnection } from '../services/solana/ledger.js';
 
 export const authRouter = Router();
 
@@ -120,5 +122,21 @@ authRouter.patch('/wallet', requireAuth, async (req, res) => {
     }
     console.error('[auth] wallet update failed:', err);
     res.status(500).json({ error: 'Failed to update wallet address.' });
+  }
+});
+
+/** Real devnet SOL balance for the logged-in user's linked wallet. Read-only —
+ *  works regardless of whether real escrow settlement (USE_REAL_SOLANA) is
+ *  on, since it's just a balance query against the configured RPC. */
+authRouter.get('/wallet/balance', requireAuth, async (req, res) => {
+  const user = await findUserById(req.userId!);
+  if (!user) return res.status(401).json({ error: 'Not logged in.' });
+  if (!user.walletAddress) return res.json({ balanceSol: null });
+  try {
+    const lamports = await getConnection().getBalance(new PublicKey(user.walletAddress));
+    res.json({ balanceSol: lamports / LAMPORTS_PER_SOL });
+  } catch (err) {
+    console.error('[auth] balance lookup failed:', err);
+    res.status(502).json({ error: 'Failed to fetch wallet balance.' });
   }
 });

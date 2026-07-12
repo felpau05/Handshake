@@ -26,6 +26,8 @@ export function SpellArena() {
   const [submitted, setSubmitted] = useState(false);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const drawerRef = useRef<DrawingUtils | null>(null);
+  const [submitting, setSubmitting] = useState(false);
+  const [submitError, setSubmitError] = useState<string | null>(null);
 
   const prompt = useGameStore((s) => s.match?.prompt ?? '');
   const deadline = useGameStore((s) => s.match?.phaseDeadline ?? null);
@@ -108,10 +110,23 @@ export function SpellArena() {
     if (!submitted) sendSpellProgress(word.length);
   }, [word, submitted]);
 
-  const doSubmit = () => {
-    if (submitted) return;
+  // Submission used to be fire-and-forget: the UI showed "Submitted ✓"
+  // regardless of whether the server actually got it, so a silently dropped
+  // or rejected submission (e.g. a race with the phase timing out) looked
+  // identical to a real one. Now it waits for the server's real answer and
+  // only locks in on confirmed success; on failure it un-submits and shows
+  // why, so the player can just hit the button again.
+  const doSubmit = async () => {
+    if (submitted || submitting) return;
+    setSubmitting(true);
+    setSubmitError(null);
+    const ack = await submitWord(word);
+    setSubmitting(false);
+    if (ack.error) {
+      setSubmitError(ack.error);
+      return;
+    }
     setSubmitted(true);
-    submitWord(word);
   };
 
   return (
@@ -140,11 +155,14 @@ export function SpellArena() {
       <div className="word-display">{word || <span className="muted">sign your word…</span>}</div>
 
       <div className="gesture-buttons">
-        <button onClick={deleteLast} disabled={submitted || !word}>⌫ Delete (wave / Backspace)</button>
-        <button className="primary" onClick={doSubmit} disabled={submitted}>
-          {submitted ? 'Submitted ✓' : 'Submit word'}
+        <button onClick={deleteLast} disabled={submitted || submitting || !word}>⌫ Delete (wave / Backspace)</button>
+        <button className="primary" onClick={doSubmit} disabled={submitted || submitting}>
+          {submitted ? 'Submitted ✓' : submitting ? 'Submitting…' : 'Submit word'}
         </button>
       </div>
+      {submitError && (
+        <p className="delta-lose">{submitError} — try again.</p>
+      )}
 
       <p className="muted">
         Hold a letter sign to add it; wave your hand or press Backspace to delete. No autocorrect —

@@ -14,11 +14,15 @@ interface AuthStore {
   user: AuthUser | null;
   status: 'checking' | 'authenticated' | 'anonymous';
   error: string | null;
+  /** null = no wallet on file or not fetched yet; undefined never used, just absent-until-first-fetch. */
+  walletBalanceSol: number | null;
+  balanceLoading: boolean;
   checkSession: () => Promise<void>;
   login: (email: string, password: string) => Promise<void>;
   register: (email: string, password: string, displayName: string, walletAddress: string) => Promise<void>;
   logout: () => Promise<void>;
   updateWallet: (walletAddress: string) => Promise<void>;
+  fetchBalance: () => Promise<void>;
 }
 
 async function parseJsonOrThrow(res: Response): Promise<any> {
@@ -27,10 +31,12 @@ async function parseJsonOrThrow(res: Response): Promise<any> {
   return data;
 }
 
-export const useAuthStore = create<AuthStore>((set) => ({
+export const useAuthStore = create<AuthStore>((set, get) => ({
   user: null,
   status: 'checking',
   error: null,
+  walletBalanceSol: null,
+  balanceLoading: false,
 
   checkSession: async () => {
     try {
@@ -38,6 +44,7 @@ export const useAuthStore = create<AuthStore>((set) => ({
       if (!res.ok) return set({ user: null, status: 'anonymous' });
       const data = await res.json();
       set({ user: data.user, status: 'authenticated' });
+      void get().fetchBalance();
     } catch {
       set({ user: null, status: 'anonymous' });
     }
@@ -54,6 +61,7 @@ export const useAuthStore = create<AuthStore>((set) => ({
       });
       const data = await parseJsonOrThrow(res);
       set({ user: data.user, status: 'authenticated' });
+      void get().fetchBalance();
     } catch (err) {
       set({ error: err instanceof Error ? err.message : 'Login failed.' });
       throw err;
@@ -71,6 +79,7 @@ export const useAuthStore = create<AuthStore>((set) => ({
       });
       const data = await parseJsonOrThrow(res);
       set({ user: data.user, status: 'authenticated' });
+      void get().fetchBalance();
     } catch (err) {
       set({ error: err instanceof Error ? err.message : 'Registration failed.' });
       throw err;
@@ -79,7 +88,19 @@ export const useAuthStore = create<AuthStore>((set) => ({
 
   logout: async () => {
     await fetch('/api/auth/logout', { method: 'POST', credentials: 'include' });
-    set({ user: null, status: 'anonymous' });
+    set({ user: null, status: 'anonymous', walletBalanceSol: null });
+  },
+
+  fetchBalance: async () => {
+    set({ balanceLoading: true });
+    try {
+      const res = await fetch('/api/auth/wallet/balance', { credentials: 'include' });
+      if (!res.ok) return set({ walletBalanceSol: null, balanceLoading: false });
+      const data = await res.json();
+      set({ walletBalanceSol: data.balanceSol ?? null, balanceLoading: false });
+    } catch {
+      set({ walletBalanceSol: null, balanceLoading: false });
+    }
   },
 
   updateWallet: async (walletAddress) => {
@@ -93,6 +114,7 @@ export const useAuthStore = create<AuthStore>((set) => ({
       });
       const data = await parseJsonOrThrow(res);
       set({ user: data.user });
+      void get().fetchBalance();
     } catch (err) {
       set({ error: err instanceof Error ? err.message : 'Failed to update wallet.' });
       throw err;

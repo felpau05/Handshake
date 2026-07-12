@@ -15,8 +15,6 @@ const schema = z.object({
 
   GEMINI_API_KEY: z.string().optional(),
   GEMINI_MODEL: z.string().default('gemini-2.5-flash'),
-  GEMINI_IMAGE_MODEL: z.string().default('gemini-2.5-flash-image'),
-  STUB_IMAGE_GEN: boolish,
   /** Route Gemini calls through Vertex AI (rebranded "Gemini Enterprise Agent
    *  Platform") instead of the plain Developer API. This bills through normal
    *  Cloud billing/credits, not the Developer API's separate prepay wallet.
@@ -43,8 +41,8 @@ const schema = z.object({
   SOLANA_KEYPAIR_PATH2: z.string().optional(),
   /** House/escrow wallet keypair file — holds the pot between match start and match end. */
   SOLANA_KEYPAIR_PATH3: z.string().optional(),
-  /** SOL amount settled per match at MATCH_END. */
-  SOLANA_BET_SOL: z.coerce.number().default(0.1),
+  /** Fixed entry fee (SOL) — not player-chosen, same for every match. */
+  SOLANA_BET_SOL: z.coerce.number().default(0.5),
   /** DEMO ONLY: JSON map of accountId -> keypair file path, for accounts whose
    *  secret key we hold server-side so a match between two of them settles as
    *  a real peer-to-peer transfer. Never do this for a real user's wallet. */
@@ -72,7 +70,6 @@ const geminiConfigured = env.GEMINI_USE_VERTEX
 export const features = {
   gemini: geminiConfigured,
   elevenlabs: Boolean(env.ELEVENLABS_API_KEY && env.ELEVENLABS_VOICE_ID),
-  imageGen: !env.STUB_IMAGE_GEN && geminiConfigured,
   mongo: Boolean(env.MONGODB_URI),
   solana: env.USE_REAL_SOLANA && Boolean(env.SOLANA_RPC_URL) && Boolean(env.SOLANA_KEYPAIR_PATH3),
 };

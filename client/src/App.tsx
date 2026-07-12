@@ -1,8 +1,7 @@
 // Top-level app. Wires the socket, then renders the right view for the current
 // server phase. State always comes from the server (the store mirrors it), so
 // both laptops render the same thing.
-import { useCallback, useState } from 'react';
-import type { CaptureWinnerPhotoPayload } from '@app/shared';
+import { useState } from 'react';
 import { useSocket, leaveMatch } from './hooks/useSocket.js';
 import { useGameStore } from './state/gameStore.js';
 import { Lobby } from './components/Lobby.js';
@@ -12,21 +11,18 @@ import { SpellArena } from './components/SpellArena.js';
 import { ResultView } from './components/ResultView.js';
 import { VoicePlayer } from './components/VoicePlayer.js';
 import { Leaderboard } from './components/Leaderboard.js';
-import { WinnerPhotoCapture } from './components/WinnerPhotoCapture.js';
 
 export default function App() {
   const [leaderboardRefresh, setLeaderboardRefresh] = useState(0);
-  const [amWinner, setAmWinner] = useState(false);
 
-  const playerId = useGameStore((s) => s.playerId);
-  const onWinnerPhoto = useCallback(
-    (p: CaptureWinnerPhotoPayload) => setAmWinner(p.playerId === playerId),
-    [playerId],
-  );
-  useSocket(onWinnerPhoto);
+  useSocket();
 
   const match = useGameStore((s) => s.match);
+  const mySlot = useGameStore((s) => s.mySlot);
+  const me = useGameStore((s) => s.me());
+  const opponent = useGameStore((s) => s.opponent());
   const phase = match?.phase ?? 'LOBBY';
+  const iWon = match?.matchWinner === mySlot;
 
   return (
     <div className="app">
@@ -59,10 +55,14 @@ export default function App() {
       {phase === 'MATCH_END' && (
         <>
           <div className="grid-2">
-            <WinnerPhotoCapture
-              isWinner={amWinner}
-              onProcessed={() => setLeaderboardRefresh((n) => n + 1)}
-            />
+            <div className="panel" style={{ textAlign: 'center' }}>
+              <h3>{iWon ? '🏆 You won the match!' : 'Match over'}</h3>
+              <p className="muted">
+                {iWon
+                  ? `You beat ${opponent?.displayName ?? 'your opponent'}!`
+                  : `${me?.displayName ?? 'You'} lost to ${opponent?.displayName ?? 'your opponent'} — better luck next time.`}
+              </p>
+            </div>
             <Leaderboard refresh={leaderboardRefresh} />
           </div>
           {/* Post-game lingers as long as they want; this is the way back. */}
@@ -70,7 +70,7 @@ export default function App() {
             className="primary"
             style={{ marginTop: '1rem' }}
             onClick={() => {
-              setAmWinner(false);
+              setLeaderboardRefresh((n) => n + 1);
               leaveMatch();
             }}
           >

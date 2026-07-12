@@ -4,19 +4,17 @@
 import { useEffect } from 'react';
 import {
   SocketEvents,
-  type CaptureWinnerPhotoPayload,
   type GameErrorPayload,
   type JoinedAck,
   type MatchState,
   type MatchResult,
   type NarrationPayload,
+  type SubmitWordAck,
 } from '@app/shared';
 import { socket } from '../lib/socket.js';
 import { useGameStore } from '../state/gameStore.js';
 
-type OnWinnerPhoto = (payload: CaptureWinnerPhotoPayload) => void;
-
-export function useSocket(onWinnerPhoto?: OnWinnerPhoto): void {
+export function useSocket(): void {
   const { setMatch, setLastResult, setNarration, setError } = useGameStore();
 
   useEffect(() => {
@@ -24,22 +22,19 @@ export function useSocket(onWinnerPhoto?: OnWinnerPhoto): void {
     const onResult = (result: MatchResult) => setLastResult(result);
     const onNarration = (p: NarrationPayload) => setNarration(p.text, p.audioUrl);
     const onError = (e: GameErrorPayload) => setError(e.message);
-    const onPhoto = (p: CaptureWinnerPhotoPayload) => onWinnerPhoto?.(p);
 
     socket.on(SocketEvents.MATCH_STATE, onState);
     socket.on(SocketEvents.MATCH_RESULT, onResult);
     socket.on(SocketEvents.NARRATION, onNarration);
     socket.on(SocketEvents.ERROR, onError);
-    socket.on(SocketEvents.CAPTURE_WINNER_PHOTO, onPhoto);
 
     return () => {
       socket.off(SocketEvents.MATCH_STATE, onState);
       socket.off(SocketEvents.MATCH_RESULT, onResult);
       socket.off(SocketEvents.NARRATION, onNarration);
       socket.off(SocketEvents.ERROR, onError);
-      socket.off(SocketEvents.CAPTURE_WINNER_PHOTO, onPhoto);
     };
-  }, [setMatch, setLastResult, setNarration, setError, onWinnerPhoto]);
+  }, [setMatch, setLastResult, setNarration, setError]);
 }
 
 // ── Typed emit helpers ───────────────────────────────────────────────────────
@@ -72,8 +67,19 @@ export function setStake(stake: number): void {
   socket.emit(SocketEvents.SET_STAKE, { stake });
 }
 
-export function submitWord(word: string): void {
-  socket.emit(SocketEvents.SUBMIT_WORD, { word });
+/**
+ * Submits a word and resolves with the server's real answer — accepted, or
+ * rejected with a reason (e.g. the phase already moved on) — instead of the
+ * old fire-and-forget emit, which gave the caller no way to tell a silent
+ * drop from a real submission. Times out after 5s if the server never
+ * responds at all (e.g. a dead connection).
+ */
+export function submitWord(word: string): Promise<SubmitWordAck> {
+  return new Promise((resolve) => {
+    socket.timeout(5000).emit(SocketEvents.SUBMIT_WORD, { word }, (err: Error | null, ack?: SubmitWordAck) => {
+      resolve(err ? { error: 'No response from server — check your connection.' } : ack ?? {});
+    });
+  });
 }
 
 export function sendSpellProgress(length: number): void {

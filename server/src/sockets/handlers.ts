@@ -72,8 +72,11 @@ export function registerSocketHandlers(io: Server): void {
       if (res?.error) emitError(socket, 'STAKE_REJECTED', res.error);
     });
 
-    socket.on(SocketEvents.SUBMIT_WORD, (payload: SubmitWordPayload) => {
-      metaRoom(meta)?.submitWord(meta!.slot, payload.word ?? '');
+    socket.on(SocketEvents.SUBMIT_WORD, (payload: SubmitWordPayload, ack?: Function) => {
+      const room = metaRoom(meta);
+      const res = room ? room.submitWord(meta!.slot, payload.word ?? '') : { error: 'Not in a match.' };
+      if (typeof ack === 'function') ack(res);
+      if (res.error) emitError(socket, 'SUBMIT_REJECTED', res.error);
     });
 
     // Leave the current room (post-game "back to lobby") without disconnecting
@@ -123,8 +126,6 @@ function makeCallbacks(io: Server, roomCode: string): GameRoomCallbacks {
     broadcastResult: (result) => room().emit(SocketEvents.MATCH_RESULT, result),
     broadcastNarration: (text, audioUrl) =>
       room().emit(SocketEvents.NARRATION, { text, audioUrl }),
-    requestWinnerPhoto: (playerId) =>
-      room().emit(SocketEvents.CAPTURE_WINNER_PHOTO, { playerId }),
     announcePrompt: (prompt, suddenDeath) => announcePrompt(prompt, suddenDeath),
     speak: (text) => textToSpeech(text),
     // Settle the wager on Solana (escrow → winner) AND record both players on the

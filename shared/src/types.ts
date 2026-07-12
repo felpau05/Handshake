@@ -16,7 +16,7 @@ export type GamePhase =
   | 'PROMPT' // Gemini reveals a prompt word
   | 'SPELL' // both players fingerspell simultaneously (timed)
   | 'RESOLVE' // Gemini validates words, longest valid wins
-  | 'MATCH_END'; // winner portrait, settle wager, leaderboard
+  | 'MATCH_END'; // settle wager, leaderboard
 
 /** Per-player state the server tracks and broadcasts. */
 export interface PlayerState {
@@ -87,9 +87,6 @@ export interface LeaderboardEntry {
   losses: number;
 }
 
-/** Preset wager amounts offered in the STAKE phase (host may pick any). */
-export const STAKE_OPTIONS = [10, 20, 50] as const;
-
 // ── Socket protocol ──────────────────────────────────────────────────────────
 
 export const SocketEvents = {
@@ -106,7 +103,6 @@ export const SocketEvents = {
   MATCH_STATE: 'match_state',
   MATCH_RESULT: 'match_result',
   NARRATION: 'narration',
-  CAPTURE_WINNER_PHOTO: 'capture_winner_photo',
   LEADERBOARD_UPDATE: 'leaderboard_update',
   ERROR: 'game_error',
 } as const;
@@ -143,13 +139,16 @@ export interface JoinedAck {
   slot: PlayerSlot;
 }
 
+/** Server → client acknowledgement for SUBMIT_WORD — lets the client tell for
+ *  certain whether the server actually accepted it (e.g. the phase hadn't
+ *  already moved on), instead of assuming success on a fire-and-forget emit. */
+export interface SubmitWordAck {
+  error?: string;
+}
+
 export interface NarrationPayload {
   text: string;
   audioUrl: string | null;
-}
-
-export interface CaptureWinnerPhotoPayload {
-  playerId: string;
 }
 
 export interface GameErrorPayload {

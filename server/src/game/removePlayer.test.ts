@@ -7,7 +7,6 @@ const noopCb: GameRoomCallbacks = {
   broadcastState: () => {},
   broadcastResult: () => {},
   broadcastNarration: () => {},
-  requestWinnerPhoto: () => {},
   announcePrompt: async () => '',
   speak: async () => null,
   settleMatch: async () => {},

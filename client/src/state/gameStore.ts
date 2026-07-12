@@ -26,7 +26,7 @@ interface GameStore {
   // actions
   setIdentity: (roomCode: string, playerId: string, mySlot: PlayerSlot) => void;
   setMatch: (match: MatchState) => void;
-  setLastResult: (result: MatchResult) => void;
+  setLastResult: (result: MatchResult | null) => void;
   setNarration: (text: string, audioUrl: string | null) => void;
   setLeaderboard: (entries: LeaderboardEntry[]) => void;
   setError: (message: string | null) => void;
@@ -48,7 +48,14 @@ export const useGameStore = create<GameStore>((set, get) => ({
   error: null,
 
   setIdentity: (roomCode, playerId, mySlot) => set({ roomCode, playerId, mySlot }),
-  setMatch: (match) => set({ match }),
+  setMatch: (match) => {
+    // The instant a FRESH round's PROMPT phase begins, drop any previous
+    // round's result — otherwise ResultView (rendered during RESOLVE) keeps
+    // showing last round's words for the several seconds it takes Gemini to
+    // judge this one, which reads as "my submission didn't register."
+    const justEnteredPrompt = match.phase === 'PROMPT' && get().match?.phase !== 'PROMPT';
+    set(justEnteredPrompt ? { match, lastResult: null } : { match });
+  },
   setLastResult: (lastResult) => set({ lastResult }),
   setNarration: (text, audioUrl) => set({ narration: { text, audioUrl } }),
   setLeaderboard: (leaderboard) => set({ leaderboard }),

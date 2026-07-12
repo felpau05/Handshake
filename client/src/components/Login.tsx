@@ -3,6 +3,7 @@
 // (editable later); login is just email + password.
 import { useState } from 'react';
 import { useAuthStore } from '../state/authStore.js';
+import { WalletBalance } from './WalletBalance.js';
 
 export function Login() {
   const [mode, setMode] = useState<'login' | 'register'>('login');
@@ -163,6 +164,12 @@ export function AccountBar() {
               <a href="#" onClick={(e) => { e.preventDefault(); setEditingWallet(true); }}>
                 edit
               </a>
+              {user.walletAddress && (
+                <>
+                  {' · '}
+                  <WalletBalance />
+                </>
+              )}
             </>
           )}
         </div>

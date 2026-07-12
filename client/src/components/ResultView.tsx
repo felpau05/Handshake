@@ -1,11 +1,23 @@
 // RESOLVE view: shows both submitted words, whether each was valid, and who won
-// the round (or that it's a tie heading to sudden death).
+// the round (or that it's a tie heading to sudden death). `lastResult` is
+// cleared client-side the instant a fresh round starts (see useSocket.ts), so
+// this never shows a PREVIOUS round's words while the current one is still
+// being judged — it shows a loading state instead.
 import { useGameStore } from '../state/gameStore.js';
 
 export function ResultView() {
   const result = useGameStore((s) => s.lastResult);
   const mySlot = useGameStore((s) => s.mySlot);
-  if (!result || !mySlot) return null;
+  if (!mySlot) return null;
+
+  if (!result) {
+    return (
+      <div className="panel" style={{ textAlign: 'center' }}>
+        <h3>Tallying it up…</h3>
+        <p className="muted">The judges are weighing in — hang tight.</p>
+      </div>
+    );
+  }
 
   const oppSlot = mySlot === 'p1' ? 'p2' : 'p1';
   const mine = result.words[mySlot];

@@ -11,15 +11,19 @@ import type {
   PlayerState,
   MatchResult,
 } from '@app/shared';
-import { STAKE_OPTIONS } from '@app/shared';
 import { pickPromptWord } from './promptWords.js';
 import { resolveWordBattle } from './WordBattleResolver.js';
 import { getFillerNarration } from './fillerNarration.js';
+import { env } from '../config/env.js';
 
 // ── Tunable match config ─────────────────────────────────────────────────────
 export const STARTING_COINS = 100;
-export const DEFAULT_STAKE = STAKE_OPTIONS[1]; // 20
 export const SPELL_DURATION_MS = 25_000;
+// How many rounds' worth of prompt reveals to keep pre-generated. Filled as
+// soon as both players are in the lobby (see addPlayer), so most matches
+// never wait on a fresh Gemini/ElevenLabs round-trip for any round, sudden
+// death included.
+const PROMPT_QUEUE_TARGET = 5;
 // Floor for the post-result pause — the real pause is however long the result
 // narration takes to say (see estimateSpeechMs), never less than this.
 const RESULT_PAUSE_MS = 3_500;
@@ -63,7 +67,6 @@ export interface GameRoomCallbacks {
   broadcastState(state: MatchState): void;
   broadcastResult(result: MatchResult): void;
   broadcastNarration(text: string, audioUrl: string | null): void;
-  requestWinnerPhoto(playerId: string): void;
   /** Gemini reveal line + optional move hint for a fresh prompt. */
   announcePrompt(prompt: string, suddenDeath: boolean): Promise<string>;
   /** ElevenLabs TTS → audio url/data, or null when voice is stubbed off. */
@@ -80,7 +83,8 @@ export class GameRoom {
   readonly roomCode: string;
   private phase: GamePhase = 'LOBBY';
   private prompt: string | null = null;
-  private stake: number = DEFAULT_STAKE;
+  /** Flat entry fee in SOL — fixed, not player-chosen (see enterStake). */
+  private stake: number = env.SOLANA_BET_SOL;
   private suddenDeath = false;
   private suddenDeathCount = 0;
   private phaseDeadline: number | null = null;
@@ -88,11 +92,12 @@ export class GameRoom {
   private players: Record<PlayerSlot, PlayerState | null> = { p1: null, p2: null };
   private usedPrompts: string[] = [];
   private timer: NodeJS.Timeout | null = null;
-  /** Speculative prefetch of the next prompt's reveal (theme + banter audio),
-   *  kicked off ahead of need (see enterStake/resolve) so it's usually already
-   *  ready by the time startPrompt() actually needs it. Discarded, not
-   *  awaited, if the round it was hedging for turns out unneeded. */
-  private nextPromptCache: Promise<PromptReveal> | null = null;
+  /** Pre-generated prompt reveals (theme + Gemini banter + ElevenLabs audio),
+   *  consumed in order by startPrompt(). Filled as soon as both players join
+   *  (see addPlayer) and topped back up after each consumption, so a round —
+   *  including sudden-death repeats — usually never waits on a fresh
+   *  Gemini/ElevenLabs round-trip. */
+  private promptQueue: Promise<PromptReveal>[] = [];
 
   constructor(
     roomCode: string,
@@ -124,6 +129,10 @@ export class GameRoom {
       wordValid: null,
     };
     this.broadcast();
+    if (this.players.p1 && this.players.p2) {
+      console.log(`[GameRoom ${this.roomCode}] both players in the lobby -> pre-generating up to ${PROMPT_QUEUE_TARGET} rounds' worth of prompts`);
+      this.fillPromptQueue();
+    }
     return { playerId, slot };
   }
 
@@ -167,6 +176,16 @@ export class GameRoom {
   }
 
   private enterStake(): void {
+    // A non-null matchWinner means a PREVIOUS match already finished in this
+    // room (endMatch sets it) — i.e. this is a replay, not the room's first
+    // match. Any leftover queued items were generated as sudden-death
+    // flavor for that old match; wrong for a fresh opening round, so clear
+    // and let fillPromptQueue() rebuild with correct slot-0 semantics. On
+    // the room's actual first call this is false, so the queue addPlayer()
+    // already started filling survives untouched.
+    const isReplay = this.matchWinner !== null;
+    if (isReplay) this.promptQueue = [];
+
     for (const p of this.eachPlayer()) {
       p.totalCoins = STARTING_COINS;
       p.ready = false;
@@ -176,23 +195,22 @@ export class GameRoom {
     this.matchWinner = null;
     this.usedPrompts = [];
     this.suddenDeathCount = 0;
+    // Fixed entry fee — not player-chosen. Re-read on every fresh match in
+    // case the env var changed (e.g. hot-reloaded in dev).
+    this.stake = env.SOLANA_BET_SOL;
     this.setPhase('STAKE', null);
-    console.log(`[GameRoom ${this.roomCode}] LOBBY -> STAKE; prefetching first prompt reveal in the background`);
-    // Kicked off now, while players are setting the stake, so it's usually
-    // already ready by the time STAKE locks in and startPrompt() needs it.
-    this.nextPromptCache = this.startPromptPrefetch(false);
+    console.log(`[GameRoom ${this.roomCode}] LOBBY -> STAKE (entry fee ${this.stake} SOL)`);
+    this.fillPromptQueue();
   }
 
-  /** Either player may set the stake; readying up locks it, collects escrow, and
-   *  starts the first prompt. */
-  setStake(slot: PlayerSlot, stake: number): { error?: string } {
+  /** Confirms entry: locks the (fixed) stake in, collects escrow once both
+   *  players have confirmed, and starts the first prompt. */
+  setStake(slot: PlayerSlot, _stake: number): { error?: string } {
     const p = this.players[slot];
     if (!p || this.phase !== 'STAKE') return { error: 'Not in stake phase' };
-    if (!Number.isFinite(stake) || stake <= 0) return { error: 'Invalid stake' };
-    this.stake = Math.floor(stake);
     p.ready = true;
     this.broadcast();
-    console.log(`[GameRoom ${this.roomCode}] ${p.displayName} locked in stake=${this.stake}`);
+    console.log(`[GameRoom ${this.roomCode}] ${p.displayName} confirmed entry (${this.stake} SOL)`);
     if (this.players.p1?.ready && this.players.p2?.ready) {
       // Fire-and-forget escrow collection at match start — must never block or
       // break the match if a wallet/chain call fails.
@@ -208,13 +226,9 @@ export class GameRoom {
 
   // ── PROMPT → SPELL ─────────────────────────────────────────────────────────
 
-  /** Kicks off Gemini announcePrompt() + ElevenLabs speak() for a fresh prompt
-   *  word. Does NOT commit it to usedPrompts — only startPrompt() does that,
-   *  once it actually consumes the result — so speculative callers (enterStake,
-   *  resolve) can prefetch work that might end up discarded (a decisive round
-   *  never needs the "next sudden-death prompt" it hedged for). */
-  private startPromptPrefetch(suddenDeath: boolean): Promise<PromptReveal> {
-    const prompt = pickPromptWord(this.usedPrompts);
+  /** Kicks off Gemini announcePrompt() + ElevenLabs speak() for one specific
+   *  prompt word (already picked by the caller — see fillPromptQueue). */
+  private generateReveal(prompt: string, suddenDeath: boolean): Promise<PromptReveal> {
     return (async () => {
       const line = await this.cb
         .announcePrompt(prompt, suddenDeath)
@@ -222,6 +236,32 @@ export class GameRoom {
       const audio = await this.cb.speak(line).catch(() => null);
       return { prompt, line, audio };
     })();
+  }
+
+  /**
+   * Tops the prompt queue back up to PROMPT_QUEUE_TARGET. Picks all the
+   * themes for any new slots synchronously (each excluding every theme
+   * already used OR already queued, so a single fill pass never queues
+   * duplicates), then kicks off their Gemini/ElevenLabs generation truly in
+   * parallel. Slot 0 (only ever picked once, right after both players join)
+   * is the match's opening round; everything after it is sudden-death tone,
+   * since in this single-round-per-match format any round beyond the first
+   * IS a tiebreaker. Idempotent — safe to call from multiple places.
+   */
+  private fillPromptQueue(): void {
+    if (this.promptQueue.length >= PROMPT_QUEUE_TARGET) return;
+    // `reserved` is ONLY the exclusion list for picking distinct themes
+    // within this pass — the loop's quota check is `promptQueue.length`
+    // alone; adding reserved.length on top double-counts the very items
+    // just pushed and silently under-fills the queue.
+    const reserved: string[] = [];
+    while (this.promptQueue.length < PROMPT_QUEUE_TARGET) {
+      const suddenDeath = this.promptQueue.length > 0;
+      const prompt = pickPromptWord([...this.usedPrompts, ...reserved]);
+      reserved.push(prompt);
+      this.promptQueue.push(this.generateReveal(prompt, suddenDeath));
+    }
+    console.log(`[GameRoom ${this.roomCode}] prompt queue topped up to ${this.promptQueue.length}/${PROMPT_QUEUE_TARGET} (generating in the background)`);
   }
 
   private async startPrompt(suddenDeath: boolean): Promise<void> {
@@ -234,27 +274,33 @@ export class GameRoom {
     }
     this.setPhase('PROMPT', null);
 
-    let pending = this.nextPromptCache;
-    this.nextPromptCache = null;
+    let pending = this.promptQueue.shift();
     if (pending) {
-      console.log(`[GameRoom ${this.roomCode}] PROMPT begins — using prefetched reveal (no wait)`);
+      console.log(`[GameRoom ${this.roomCode}] PROMPT begins — using queued reveal (${this.promptQueue.length} left in queue)`);
     } else {
-      // No prefetch was ready (e.g. STAKE locked in faster than the prefetch
-      // finished) — play a cached filler line (real, pre-synthesized audio,
-      // zero extra latency) while generating fresh.
-      console.log(`[GameRoom ${this.roomCode}] PROMPT begins — no prefetch ready, generating fresh + playing filler`);
+      // Queue exhausted (an unusually long sudden-death streak) — play a
+      // cached filler line (real, pre-synthesized audio, zero extra latency)
+      // while generating fresh.
+      console.log(`[GameRoom ${this.roomCode}] PROMPT begins — queue empty, generating fresh + playing filler`);
       const filler = await getFillerNarration('prompt').catch(() => null);
       if (filler) {
         console.log(`[GameRoom ${this.roomCode}] narration (filler, before reveal ready): "${filler.text}"`);
         this.cb.broadcastNarration(filler.text, filler.audioUrl);
       }
-      pending = this.startPromptPrefetch(suddenDeath);
+      pending = this.generateReveal(pickPromptWord(this.usedPrompts), suddenDeath);
     }
+    this.fillPromptQueue(); // top back up for the rounds after this one
 
     const { prompt, line, audio } = await pending;
     this.prompt = prompt;
     this.usedPrompts.push(prompt);
-    console.log(`[GameRoom ${this.roomCode}] narration (reveal) broadcast: "${line}"`);
+    // Without this, the client keeps showing whatever `prompt` was last
+    // broadcast (null/empty on a match's first round, or the PREVIOUS
+    // round's theme on sudden death) for the entire reveal-narration hold —
+    // it only caught up once SPELL broadcast next. Theme text and reveal
+    // narration must land together.
+    this.broadcast();
+    console.log(`[GameRoom ${this.roomCode}] narration (reveal) broadcast: "${line}" (prompt="${prompt}")`);
     this.cb.broadcastNarration(line, audio);
 
     // Hold PROMPT open until the reveal line actually finishes being said —
@@ -268,16 +314,21 @@ export class GameRoom {
     this.armTimer(() => void this.resolve(), SPELL_DURATION_MS);
   }
 
-  /** A player submits their assembled word (or auto-submitted at timeout). */
-  submitWord(slot: PlayerSlot, word: string): void {
+  /** A player submits their assembled word (or auto-submitted at timeout).
+   *  Returns an error when rejected (e.g. the phase already moved on) so the
+   *  caller can tell the client for certain rather than assuming success —
+   *  SUBMIT_WORD used to be fire-and-forget with no way to detect a drop. */
+  submitWord(slot: PlayerSlot, word: string): { error?: string } {
     const p = this.players[slot];
-    if (!p || this.phase !== 'SPELL') return;
+    if (!p) return { error: 'Not in this match.' };
+    if (this.phase !== 'SPELL') return { error: 'Spelling window is closed.' };
     p.submittedWord = word;
     this.broadcast();
     console.log(`[GameRoom ${this.roomCode}] ${p.displayName} submitted "${word}"`);
     if (this.players.p1?.submittedWord !== null && this.players.p2?.submittedWord !== null) {
       void this.resolve();
     }
+    return {};
   }
 
   // ── RESOLVE ────────────────────────────────────────────────────────────────
@@ -288,12 +339,11 @@ export class GameRoom {
     this.setPhase('RESOLVE', null);
     console.log(`[GameRoom ${this.roomCode}] SPELL -> RESOLVE`);
 
-    // Speculatively prefetch the NEXT sudden-death prompt now, in parallel
-    // with judging below — the judgment can't be known ahead of the words
-    // players actually submitted, but the next prompt's content doesn't
-    // depend on that at all. If this round ties, startPrompt() picks this up
-    // already-ready; if it's decisive, it's simply discarded (unused).
-    const suddenDeathPrefetch = this.startPromptPrefetch(true);
+    // The prompt queue (filled since the lobby) almost always already has
+    // the next sudden-death round ready by now; top it up regardless in case
+    // an unusually long tie streak has been eating into it faster than
+    // refills keep pace.
+    this.fillPromptQueue();
 
     // Instant placeholder — judgeRound() is a real API call and takes a few
     // seconds; without this the screen just goes dead the moment SPELL ends.
@@ -349,20 +399,15 @@ export class GameRoom {
         // Too many ties — force a decision so the match always ends. Decide by
         // raw letter count (validity-agnostic); still tied → deterministic pick.
         const forced = this.forceDecide(words);
-        void suddenDeathPrefetch.catch(() => undefined); // unused — discard
         console.log(`[GameRoom ${this.roomCode}] tie limit reached -> forcing a decision instead of another sudden death`);
         this.armTimer(() => this.endMatch(forced), pauseMs);
         return;
       }
-      // The next prompt is very likely already ready (prefetched above) —
-      // startPrompt() will pick it straight up with no wait.
-      this.nextPromptCache = suddenDeathPrefetch;
-      console.log(`[GameRoom ${this.roomCode}] tie -> sudden death (next prompt prefetch in flight since judging started)`);
+      console.log(`[GameRoom ${this.roomCode}] tie -> sudden death (next round pulls from the prompt queue)`);
       this.armTimer(() => void this.startPrompt(true), pauseMs);
       return;
     }
     this.suddenDeathCount = 0;
-    void suddenDeathPrefetch.catch(() => undefined); // unused — match is ending, discard
     console.log(`[GameRoom ${this.roomCode}] decisive result (winner=${winner}) -> MATCH_END`);
     this.armTimer(() => this.endMatch(winner!), pauseMs);
   }
@@ -392,7 +437,6 @@ export class GameRoom {
         ],
       })
       .catch((err) => console.error(`[GameRoom ${this.roomCode}] settleMatch failed:`, err));
-    this.cb.requestWinnerPhoto(w.playerId);
   }
 
   // ── State helpers ──────────────────────────────────────────────────────────

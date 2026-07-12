@@ -1,7 +1,7 @@
-// Shared Gemini client construction. Both geminiClient.ts (narration/judging)
-// and imageGenClient.ts (winner portraits) call this instead of constructing
-// their own GoogleGenAI, so the Developer-API-vs-Vertex-AI branching (and its
-// very different auth story) lives in exactly one place.
+// Shared Gemini client construction. geminiClient.ts (narration/judging) calls
+// this instead of constructing its own GoogleGenAI, so the
+// Developer-API-vs-Vertex-AI branching (and its very different auth story)
+// lives in exactly one place.
 import { GoogleGenAI } from '@google/genai';
 import { env, features } from '../../config/env.js';
 
