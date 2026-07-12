@@ -1,0 +1,47 @@
+# Containerized stack: nginx (reverse proxy) → app (×1, the game server) →
+# redis (provisioned for the Socket.IO adapter / cache layer; not consumed by
+# the app yet — wiring it is a deliberate, separate opt-in change).
+#
+#   docker compose up --build      # then play at http://localhost:8080
+#   npx ngrok http 8080            # to share it, same as before
+#
+# The native workflow (`npm run build && npm start` + ngrok on :3001) is
+# untouched — this runs alongside it, just don't run both at once against
+# the same browser session.
+services:
+  app:
+    build: .
+    env_file:
+      # The same server/.env used natively; file-path vars in it point at
+      # host paths, so the `environment:` block below overrides them with
+      # the in-container equivalents. Everything else passes through as-is.
+      - server/.env
+    environment:
+      # Secrets are mounted at /app/secrets (read-only) — never baked into
+      # the image (.dockerignore excludes them from the build context).
+      SOLANA_KEYPAIR_PATH: /app/secrets/wallet-1-keypair.json
+      SOLANA_KEYPAIR_PATH2: /app/secrets/wallet-2-keypair.json
+      SOLANA_KEYPAIR_PATH3: /app/secrets/wallet-3-keypair.json
+      SOLANA_DEMO_KEYPAIRS: '{"6a52a5668b95c548d0578f9a":"/app/secrets/wallet-2-keypair.json","6a52a5678b95c548d0578f9e":"/app/secrets/wallet-3-keypair.json"}'
+      GOOGLE_APPLICATION_CREDENTIALS: /app/secrets/project-4f763658-4b8f-4984-b81-de17692e12f6.json
+      # Ready for the Socket.IO Redis adapter / cache opt-in; ignored today.
+      REDIS_URL: redis://redis:6379
+    volumes:
+      - ./secrets:/app/secrets:ro
+    expose:
+      - '3001'
+    restart: unless-stopped
+
+  nginx:
+    image: nginx:1.27-alpine
+    ports:
+      - '8080:80'
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      - app
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
