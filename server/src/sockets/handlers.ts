@@ -11,14 +11,17 @@ import {
   type SetReadyPayload,
   type SetStakePayload,
   type SubmitWordPayload,
+  type LetterCapture,
 } from '@app/shared';
 import { GameRoom, type GameRoomCallbacks } from '../game/GameRoom.js';
 import { createRoom, getRoom, removeRoom } from '../game/rooms.js';
-import { announcePrompt } from '../services/gemini/geminiClient.js';
+import { announcePrompt, generateSpellFeedback } from '../services/gemini/geminiClient.js';
 import { textToSpeech } from '../services/elevenlabs/ttsClient.js';
 import { readAuthCookie, verifyAuthToken } from '../services/auth/jwt.js';
-import { ledger } from '../services/solana/ledger.js';
+import { ledger, getWalletBalanceSol } from '../services/solana/ledger.js';
+import { findUserById } from '../services/auth/userStore.js';
 import { upsertPlayerResult } from '../services/mongo/leaderboard.js';
+import { env } from '../config/env.js';
 
 /**
  * A match is always tied to a logged-in account: playing requires a valid
@@ -78,7 +81,9 @@ export function registerSocketHandlers(io: Server): void {
 
     socket.on(SocketEvents.SUBMIT_WORD, (payload: SubmitWordPayload, ack?: Function) => {
       const room = metaRoom(meta);
-      const res = room ? room.submitWord(meta!.slot, payload.word ?? '') : { error: 'Not in a match.' };
+      const res = room
+        ? room.submitWord(meta!.slot, payload.word ?? '', sanitizeCaptures(payload.captures))
+        : { error: 'Not in a match.' };
       if (typeof ack === 'function') ack(res);
       if (res.error) emitError(socket, 'SUBMIT_REJECTED', res.error);
     });
@@ -121,6 +126,33 @@ function emitError(socket: Socket, code: string, message: string): void {
   socket.emit(SocketEvents.ERROR, { code, message });
 }
 
+/** Clamp client-supplied letter captures to sane bounds before they enter the
+ *  game: at most one per possible letter (20), and only small JPEG data URLs —
+ *  a hostile/buggy client can't stuff megabytes into room memory. */
+function sanitizeCaptures(raw: unknown): LetterCapture[] {
+  if (!Array.isArray(raw)) return [];
+  return raw.slice(0, 20).map((c) => {
+    const o = (c ?? {}) as Record<string, unknown>;
+    const letter = typeof o.letter === 'string' ? o.letter.slice(0, 1).toUpperCase() : '?';
+    const confidence =
+      typeof o.confidence === 'number' && Number.isFinite(o.confidence)
+        ? Math.max(0, Math.min(1, o.confidence))
+        : null;
+    const image =
+      typeof o.image === 'string' &&
+      o.image.startsWith('data:image/jpeg;base64,') &&
+      o.image.length < 150_000
+        ? o.image
+        : null;
+    return {
+      letter,
+      confidence,
+      timestamp: typeof o.timestamp === 'number' ? o.timestamp : 0,
+      image,
+    };
+  });
+}
+
 /** Build the callbacks a GameRoom uses to reach sockets + AI services, all
  *  scoped to a single room code so events never leak across matches. */
 function makeCallbacks(io: Server, roomCode: string): GameRoomCallbacks {
@@ -134,10 +166,15 @@ function makeCallbacks(io: Server, roomCode: string): GameRoomCallbacks {
     speak: (text) => textToSpeech(text),
     // Settle the wager on Solana (escrow → winner) AND record both players on the
     // leaderboard. Both are best-effort; a failure is logged, never thrown.
+    // Once the chain settles, broadcast a SETTLEMENT report (payout tx + fresh
+    // wallet balances) so both clients can SHOW the money actually moving.
     settleMatch: async (settlement) => {
-      await ledger
+      const report = await ledger
         .settleMatch(settlement)
-        .catch((err) => console.error('[settle] ledger failed:', err));
+        .catch((err): { payoutSignature: null } => {
+          console.error('[settle] ledger failed:', err);
+          return { payoutSignature: null };
+        });
       await Promise.all(
         settlement.results.map((r) =>
           upsertPlayerResult({
@@ -148,7 +185,57 @@ function makeCallbacks(io: Server, roomCode: string): GameRoomCallbacks {
           }).catch((err) => console.error('[settle] leaderboard upsert failed:', err)),
         ),
       );
+
+      // Read each player's LIVE post-settlement balance and broadcast the
+      // whole report to the room. Best-effort: a failed lookup just means
+      // that player's balance renders as "unavailable".
+      try {
+        const players = await Promise.all(
+          settlement.results.map(async (r) => {
+            const user = await findUserById(r.playerId).catch(() => null);
+            const walletAddress = user?.walletAddress ?? null;
+            const newBalanceSol = walletAddress ? await getWalletBalanceSol(walletAddress) : null;
+            return {
+              playerId: r.playerId,
+              displayName: r.displayName,
+              // deltaCoins IS the SOL stake now (+bet winner / -bet loser).
+              deltaSol: r.deltaCoins,
+              walletAddress,
+              newBalanceSol,
+            };
+          }),
+        );
+        room().emit(SocketEvents.SETTLEMENT, {
+          matchId: settlement.matchId,
+          betSol: env.SOLANA_BET_SOL,
+          potSol: env.SOLANA_BET_SOL * 2,
+          payoutSignature: report.payoutSignature,
+          players,
+        });
+        console.log(
+          `[settle] match ${settlement.matchId}: settlement report broadcast (payout tx ${report.payoutSignature ?? 'none'})`,
+        );
+      } catch (err) {
+        console.error('[settle] settlement report broadcast failed:', err);
+      }
     },
     collectEscrow: (matchId, playerIds) => ledger.collectEscrow(matchId, playerIds),
+    // Signing coach: one Gemini call per player (feedback is personal — it
+    // looks at THEIR hand photos and THEIR word), broadcast to the room in a
+    // single payload; each client picks out its own entry by playerId.
+    deliverSpellFeedback: async (inputs) => {
+      const players = await Promise.all(
+        inputs.map((input) =>
+          generateSpellFeedback(input).catch((err) => {
+            console.error(`[feedback] generation failed for ${input.displayName}:`, err);
+            return null;
+          }),
+        ),
+      );
+      const delivered = players.filter((p) => p !== null);
+      if (!delivered.length) return;
+      room().emit(SocketEvents.SPELL_FEEDBACK, { players: delivered });
+      console.log(`[feedback] signing feedback broadcast for ${delivered.length} player(s)`);
+    },
   };
 }

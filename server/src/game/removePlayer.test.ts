@@ -11,6 +11,7 @@ const noopCb: GameRoomCallbacks = {
   speak: async () => null,
   settleMatch: async () => {},
   collectEscrow: async () => {},
+  deliverSpellFeedback: async () => {},
 };
 
 describe('GameRoom.removePlayer (back-to-lobby)', () => {

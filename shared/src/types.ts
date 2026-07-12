@@ -81,10 +81,12 @@ export interface MatchResult {
 export interface LeaderboardEntry {
   playerId: string;
   displayName: string;
-  avatarUrl: string | null;
   totalCoins: number;
   wins: number;
   losses: number;
+  /** Live devnet SOL balance of the player's linked wallet (null = no wallet
+   *  on file or the RPC lookup failed). Fetched fresh server-side per request. */
+  walletBalanceSol: number | null;
 }
 
 // ── Socket protocol ──────────────────────────────────────────────────────────
@@ -104,6 +106,8 @@ export const SocketEvents = {
   MATCH_STATE: 'match_state',
   MATCH_RESULT: 'match_result',
   NARRATION: 'narration',
+  SETTLEMENT: 'settlement', // on-chain wager settlement report (tx + new balances)
+  SPELL_FEEDBACK: 'spell_feedback', // per-player match-end signing feedback (Gemini coach)
   LEADERBOARD_UPDATE: 'leaderboard_update',
   ERROR: 'game_error',
 } as const;
@@ -125,8 +129,24 @@ export interface SetReadyPayload {
 export interface SetStakePayload {
   stake: number;
 }
+/** One committed letter during SPELL, with an optional webcam snapshot of the
+ *  hand at the moment it committed. `confidence`/`image` are null for letters
+ *  typed on the keyboard fallback (there's no sign to photograph). */
+export interface LetterCapture {
+  letter: string;
+  /** Detector softmax confidence 0..1, or null for keyboard-typed letters. */
+  confidence: number | null;
+  timestamp: number;
+  /** Small mirrored JPEG data URL, or null for keyboard-typed letters. */
+  image: string | null;
+}
+
 export interface SubmitWordPayload {
   word: string;
+  /** Per-letter captures backing the word — feeds the match-end signing
+   *  feedback (Gemini looks at the actual hand photos). Optional: older
+   *  clients / keyboard-only play submit without them. */
+  captures?: LetterCapture[];
 }
 export interface SpellProgressPayload {
   /** Current in-progress word length (letters only; the word itself stays local). */
@@ -150,6 +170,62 @@ export interface SubmitWordAck {
 export interface NarrationPayload {
   text: string;
   audioUrl: string | null;
+}
+
+/** Concrete signing advice for one letter of a player's submitted word. */
+export interface LetterTip {
+  /** 0-based index into the submitted word. */
+  index: number;
+  letter: string;
+  /** Short, actionable handshape advice ("tuck your thumb across your palm for E"). */
+  tip: string;
+}
+
+/** Match-end signing feedback for ONE player — each player gets their own. */
+export interface PlayerSpellFeedback {
+  playerId: string;
+  /** The word they actually submitted (may be misspelled or empty). */
+  word: string;
+  /** Gemini's best guess at what they were TRYING to spell; null when the
+   *  submission was unreadable nonsense (no target word to compare against). */
+  intendedWord: string | null;
+  /** True when the submission was gibberish — letter-level feedback is
+   *  skipped, but `message` still explains that. */
+  nonsense: boolean;
+  /** 0-based indices in `word` that don't match the intended word. */
+  misspelledIndices: number[];
+  /** Per-letter signing advice (misread letters, low-confidence holds). */
+  tips: LetterTip[];
+  /** One friendly headline sentence — always present, even for nonsense. */
+  message: string;
+}
+
+/** Server → room broadcast, seconds after MATCH_END (one Gemini call per
+ *  player). Clients pick out their own entry by playerId. */
+export interface SpellFeedbackPayload {
+  players: PlayerSpellFeedback[];
+}
+
+/** One player's side of the match-end wager settlement. */
+export interface SettlementPlayerReport {
+  playerId: string;
+  displayName: string;
+  /** Net SOL change from this match: +bet for the winner, -bet for the loser. */
+  deltaSol: number;
+  walletAddress: string | null;
+  /** Live post-settlement wallet balance (null = no wallet / lookup failed). */
+  newBalanceSol: number | null;
+}
+
+/** Server → room broadcast once the on-chain settlement has been attempted.
+ *  Arrives seconds after MATCH_END (chain confirmation + balance reads). */
+export interface SettlementPayload {
+  matchId: string;
+  betSol: number;
+  potSol: number;
+  /** Payout transaction signature (house → winner), null if it didn't land. */
+  payoutSignature: string | null;
+  players: SettlementPlayerReport[];
 }
 
 export interface GameErrorPayload {

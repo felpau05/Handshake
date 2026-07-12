@@ -1,5 +1,5 @@
 // Leaderboard panel. Fetches GET /api/leaderboard on mount + whenever `refresh`
-// changes (e.g. after a match ends). Shows the AI-generated avatar per player.
+// changes (e.g. after a match ends).
 import { useEffect } from 'react';
 import type { LeaderboardEntry } from '@app/shared';
 import { useGameStore } from '../state/gameStore.js';
@@ -26,18 +26,18 @@ export function Leaderboard({ refresh = 0 }: Props) {
       {entries.map((e, i) => (
         <div key={e.playerId} className="leaderboard-row">
           <span className="muted" style={{ width: 20 }}>{i + 1}</span>
-          {e.avatarUrl ? (
-            <img src={e.avatarUrl} alt={e.displayName} />
-          ) : (
-            <div className="leaderboard-row" style={{ width: 42, height: 42, borderRadius: 10, background: '#23273f' }} />
-          )}
           <div style={{ flex: 1 }}>
             <strong>{e.displayName}</strong>
             <div className="muted">
               {e.wins}W · {e.losses}L
             </div>
           </div>
-          <span className="coins">{e.totalCoins}</span>
+          <div style={{ textAlign: 'right' }}>
+            <span className="coins">
+              {e.walletBalanceSol !== null ? `${e.walletBalanceSol.toFixed(3)} SOL` : '— SOL'}
+            </span>
+            <div className="muted" style={{ fontSize: '0.72rem' }}>live wallet</div>
+          </div>
         </div>
       ))}
     </div>

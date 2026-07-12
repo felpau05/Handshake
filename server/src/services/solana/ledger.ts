@@ -25,10 +25,16 @@ export interface MatchSettlement {
   }[];
 }
 
+/** What actually happened on-chain when a match settled — null signature means
+ *  the payout didn't land (no wallet on file, RPC failure, mock ledger). */
+export interface SettlementReport {
+  payoutSignature: string | null;
+}
+
 export interface CoinLedger {
   getBalance(playerId: string): Promise<number>;
   applyDelta(playerId: string, delta: number, reason: string): Promise<void>;
-  settleMatch(settlement: MatchSettlement): Promise<void>;
+  settleMatch(settlement: MatchSettlement): Promise<SettlementReport>;
   /**
    * Best-effort escrow collection at match START (LOBBY → SHOP): pulls the
    * bet amount from each player's wallet into the house wallet, when we hold
@@ -50,10 +56,11 @@ class MockLedger implements CoinLedger {
     this.balances.set(playerId, next);
     console.log(`[ledger:mock] ${playerId} ${delta >= 0 ? '+' : ''}${delta} (${reason}) → ${next}`);
   }
-  async settleMatch(s: MatchSettlement): Promise<void> {
+  async settleMatch(s: MatchSettlement): Promise<SettlementReport> {
     for (const r of s.results) {
       await this.applyDelta(r.playerId, r.deltaCoins, `match ${s.matchId}`);
     }
+    return { payoutSignature: null };
   }
   async collectEscrow(matchId: string): Promise<void> {
     console.log(`[ledger:mock] match ${matchId}: escrow collection skipped (mock ledger, no real wallets)`);
@@ -108,13 +115,24 @@ export async function transferSol(
  * account has none on file yet — settleMatch treats that as "skip on-chain,
  * not an error."
  */
-async function resolvePlayerWallet(playerId: string): Promise<PublicKey | undefined> {
+export async function resolvePlayerWallet(playerId: string): Promise<PublicKey | undefined> {
   const user = await findUserById(playerId);
   if (!user?.walletAddress) return undefined;
   try {
     return new PublicKey(user.walletAddress);
   } catch {
     return undefined;
+  }
+}
+
+/** Live devnet SOL balance for a wallet address; null on any failure (bad
+ *  address, RPC hiccup) so callers can render "unavailable" instead of crashing. */
+export async function getWalletBalanceSol(address: string): Promise<number | null> {
+  try {
+    const lamports = await getConnection().getBalance(new PublicKey(address));
+    return lamports / LAMPORTS_PER_SOL;
+  } catch {
+    return null;
   }
 }
 
@@ -184,12 +202,12 @@ class DevnetLedger implements CoinLedger {
    * swallowed — the game already knows the winner and must not break
    * because of it.
    */
-  async settleMatch(settlement: MatchSettlement): Promise<void> {
+  async settleMatch(settlement: MatchSettlement): Promise<SettlementReport> {
     await this.fallback.settleMatch(settlement);
 
     if (!this.sender) {
       console.warn('[ledger:devnet] no house wallet loaded — skipping on-chain settlement');
-      return;
+      return { payoutSignature: null };
     }
 
     const winner = settlement.results.find((r) => r.won);
@@ -198,7 +216,7 @@ class DevnetLedger implements CoinLedger {
       console.warn(
         `[ledger:devnet] match ${settlement.matchId}: no devnet wallet on file for the winner — skipping on-chain settlement`,
       );
-      return;
+      return { payoutSignature: null };
     }
 
     const pot = env.SOLANA_BET_SOL * 2;
@@ -207,9 +225,10 @@ class DevnetLedger implements CoinLedger {
       console.log(
         `[ledger:devnet] match ${settlement.matchId}: paid out ${pot} SOL pot to ${winner.playerId} (tx ${result.signature})`,
       );
-    } else {
-      console.error(`[ledger:devnet] match ${settlement.matchId}: payout failed`, result.error);
+      return { payoutSignature: result.signature };
     }
+    console.error(`[ledger:devnet] match ${settlement.matchId}: payout failed`, result.error);
+    return { payoutSignature: null };
   }
 
   /**

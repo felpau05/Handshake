@@ -6,6 +6,7 @@
 import { nanoid } from 'nanoid';
 import type {
   GamePhase,
+  LetterCapture,
   MatchState,
   PlayerSlot,
   PlayerState,
@@ -18,7 +19,9 @@ import { env } from '../config/env.js';
 
 // ── Tunable match config ─────────────────────────────────────────────────────
 export const STARTING_COINS = 100;
-export const SPELL_DURATION_MS = 25_000;
+// Both players submitting early ends the round immediately (see submitWord →
+// resolve), so the full window is only ever waited out by whoever needs it.
+export const SPELL_DURATION_MS = 40_000;
 // How many rounds' worth of prompt reveals to keep pre-generated. Filled as
 // soon as both players are in the lobby (see addPlayer), so most matches
 // never wait on a fresh Gemini/ElevenLabs round-trip for any round, sudden
@@ -66,6 +69,18 @@ export interface MatchSettlementInput {
   results: { playerId: string; displayName: string; deltaCoins: number; won: boolean }[];
 }
 
+/** Everything the match-end signing coach needs about one player's final round. */
+export interface SpellFeedbackInput {
+  playerId: string;
+  displayName: string;
+  /** The final round's theme, for judging what word they were going for. */
+  prompt: string;
+  /** What they submitted that round ('' if nothing made it in). */
+  word: string;
+  /** Per-letter captures backing the word (may be empty for keyboard play). */
+  captures: LetterCapture[];
+}
+
 /** Everything the room needs from the outside world. Injected, so tests can
  *  pass no-op stubs and production wires sockets + AI services. */
 export interface GameRoomCallbacks {
@@ -82,6 +97,9 @@ export interface GameRoomCallbacks {
   /** Escrow deposit collection, fired once at match start (STAKE lock). Same
    *  best-effort contract as settleMatch. */
   collectEscrow(matchId: string, playerIds: string[]): Promise<void>;
+  /** Per-player signing feedback (Gemini coach), fired once at MATCH_END.
+   *  Same best-effort contract as settleMatch: fire-and-forget, never blocks. */
+  deliverSpellFeedback(inputs: SpellFeedbackInput[]): Promise<void>;
 }
 
 export class GameRoom {
@@ -99,6 +117,10 @@ export class GameRoom {
   private timer: NodeJS.Timeout | null = null;
   /** Which players have reported camera + ASL model warm this round. */
   private spellReady: Record<PlayerSlot, boolean> = { p1: false, p2: false };
+  /** Per-letter captures backing each player's current-round submission —
+   *  server-side only (never broadcast in MatchState), consumed by the
+   *  match-end feedback coach. Cleared alongside submittedWord each round. */
+  private captures: Record<PlayerSlot, LetterCapture[]> = { p1: [], p2: [] };
   /** True only during the post-narration hold in startPrompt — the window in
    *  which a SPELL_READY signal is allowed to trigger the SPELL transition. */
   private awaitingSpellReady = false;
@@ -211,6 +233,7 @@ export class GameRoom {
       p.submittedWord = null;
       p.wordValid = null;
     }
+    this.captures = { p1: [], p2: [] };
     this.matchWinner = null;
     this.usedPrompts = [];
     this.suddenDeathCount = 0;
@@ -292,6 +315,7 @@ export class GameRoom {
       p.submittedWord = null;
       p.wordValid = null;
     }
+    this.captures = { p1: [], p2: [] };
     this.setPhase('PROMPT', null);
 
     let pending = this.promptQueue.shift();
@@ -360,11 +384,12 @@ export class GameRoom {
    *  Returns an error when rejected (e.g. the phase already moved on) so the
    *  caller can tell the client for certain rather than assuming success —
    *  SUBMIT_WORD used to be fire-and-forget with no way to detect a drop. */
-  submitWord(slot: PlayerSlot, word: string): { error?: string } {
+  submitWord(slot: PlayerSlot, word: string, captures?: LetterCapture[]): { error?: string } {
     const p = this.players[slot];
     if (!p) return { error: 'Not in this match.' };
     if (this.phase !== 'SPELL') return { error: 'Spelling window is closed.' };
     p.submittedWord = word;
+    this.captures[slot] = captures ?? [];
     this.broadcast();
     console.log(`[GameRoom ${this.roomCode}] ${p.displayName} submitted "${word}"`);
     // Both players must EXIST and have submitted. `players.p2?.submittedWord
@@ -417,6 +442,7 @@ export class GameRoom {
     const { winner, tie, outcomes, narration } = await resolveWordBattle({
       prompt: this.prompt!,
       words,
+      names: { p1: p1.displayName, p2: p2.displayName },
     });
     // The judge call takes seconds — a forfeit may have ended the match
     // meanwhile. Don't broadcast a result or arm end-timers on top of it.
@@ -494,6 +520,22 @@ export class GameRoom {
         ],
       })
       .catch((err) => console.error(`[GameRoom ${this.roomCode}] settleMatch failed:`, err));
+
+    // Signing coach: per-player feedback on the FINAL round's word, built from
+    // the letter captures each client sent with its submission. Fire-and-forget
+    // for the same reason as settlement — Gemini taking 10s (or failing) must
+    // never hold MATCH_END hostage.
+    const feedbackInputs = [w, l].map((p) => ({
+      playerId: p.playerId,
+      displayName: p.displayName,
+      prompt: this.prompt ?? '',
+      word: p.submittedWord ?? '',
+      captures: this.captures[p.slot],
+    }));
+    console.log(`[GameRoom ${this.roomCode}] requesting signing feedback for both players (final word: ${w.displayName}="${w.submittedWord}", ${l.displayName}="${l.submittedWord}")`);
+    void this.cb
+      .deliverSpellFeedback(feedbackInputs)
+      .catch((err) => console.error(`[GameRoom ${this.roomCode}] spell feedback failed:`, err));
   }
 
   // ── State helpers ──────────────────────────────────────────────────────────

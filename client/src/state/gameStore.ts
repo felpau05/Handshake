@@ -5,9 +5,12 @@
 import { create } from 'zustand';
 import type {
   LeaderboardEntry,
+  LetterCapture,
   MatchState,
   MatchResult,
   PlayerSlot,
+  SettlementPayload,
+  SpellFeedbackPayload,
 } from '@app/shared';
 
 interface GameStore {
@@ -20,6 +23,13 @@ interface GameStore {
   match: MatchState | null;
   lastResult: MatchResult | null;
   narration: { text: string; audioUrl: string | null } | null;
+  /** On-chain wager settlement report — arrives a few seconds into MATCH_END. */
+  settlement: SettlementPayload | null;
+  /** Match-end signing feedback for BOTH players (each client shows its own). */
+  feedback: SpellFeedbackPayload | null;
+  /** MY last submitted round's letter captures — kept locally so the feedback
+   *  card can show the actual hand photos without them round-tripping. */
+  myCaptures: LetterCapture[];
   leaderboard: LeaderboardEntry[];
   error: string | null;
 
@@ -28,6 +38,9 @@ interface GameStore {
   setMatch: (match: MatchState) => void;
   setLastResult: (result: MatchResult | null) => void;
   setNarration: (text: string, audioUrl: string | null) => void;
+  setSettlement: (settlement: SettlementPayload | null) => void;
+  setFeedback: (feedback: SpellFeedbackPayload | null) => void;
+  setMyCaptures: (captures: LetterCapture[]) => void;
   setLeaderboard: (entries: LeaderboardEntry[]) => void;
   setError: (message: string | null) => void;
   reset: () => void;
@@ -44,6 +57,9 @@ export const useGameStore = create<GameStore>((set, get) => ({
   match: null,
   lastResult: null,
   narration: null,
+  settlement: null,
+  feedback: null,
+  myCaptures: [],
   leaderboard: [],
   error: null,
 
@@ -54,10 +70,22 @@ export const useGameStore = create<GameStore>((set, get) => ({
     // showing last round's words for the several seconds it takes Gemini to
     // judge this one, which reads as "my submission didn't register."
     const justEnteredPrompt = match.phase === 'PROMPT' && get().match?.phase !== 'PROMPT';
-    set(justEnteredPrompt ? { match, lastResult: null } : { match });
+    // A fresh match beginning (STAKE re-entered after a replay) drops the
+    // previous match's settlement card the same way.
+    const justEnteredStake = match.phase === 'STAKE' && get().match?.phase !== 'STAKE';
+    set(
+      justEnteredPrompt
+        ? { match, lastResult: null }
+        : justEnteredStake
+          ? { match, settlement: null, feedback: null, myCaptures: [] }
+          : { match },
+    );
   },
   setLastResult: (lastResult) => set({ lastResult }),
   setNarration: (text, audioUrl) => set({ narration: { text, audioUrl } }),
+  setSettlement: (settlement) => set({ settlement }),
+  setFeedback: (feedback) => set({ feedback }),
+  setMyCaptures: (myCaptures) => set({ myCaptures }),
   setLeaderboard: (leaderboard) => set({ leaderboard }),
   setError: (error) => set({ error }),
   reset: () =>
@@ -68,6 +96,9 @@ export const useGameStore = create<GameStore>((set, get) => ({
       match: null,
       lastResult: null,
       narration: null,
+      settlement: null,
+      feedback: null,
+      myCaptures: [],
       error: null,
     }),
 

@@ -8,33 +8,48 @@ import {
   type JoinedAck,
   type MatchState,
   type MatchResult,
+  type LetterCapture,
   type NarrationPayload,
+  type SettlementPayload,
+  type SpellFeedbackPayload,
   type SubmitWordAck,
 } from '@app/shared';
 import { socket } from '../lib/socket.js';
 import { useGameStore } from '../state/gameStore.js';
+import { useAuthStore } from '../state/authStore.js';
 
 export function useSocket(): void {
-  const { setMatch, setLastResult, setNarration, setError } = useGameStore();
+  const { setMatch, setLastResult, setNarration, setError, setSettlement, setFeedback } =
+    useGameStore();
 
   useEffect(() => {
     const onState = (state: MatchState) => setMatch(state);
     const onResult = (result: MatchResult) => setLastResult(result);
     const onNarration = (p: NarrationPayload) => setNarration(p.text, p.audioUrl);
     const onError = (e: GameErrorPayload) => setError(e.message);
+    const onSettlement = (p: SettlementPayload) => {
+      setSettlement(p);
+      // The wager just moved on-chain — refresh the account bar's live balance.
+      void useAuthStore.getState().fetchBalance();
+    };
+    const onFeedback = (p: SpellFeedbackPayload) => setFeedback(p);
 
     socket.on(SocketEvents.MATCH_STATE, onState);
     socket.on(SocketEvents.MATCH_RESULT, onResult);
     socket.on(SocketEvents.NARRATION, onNarration);
     socket.on(SocketEvents.ERROR, onError);
+    socket.on(SocketEvents.SETTLEMENT, onSettlement);
+    socket.on(SocketEvents.SPELL_FEEDBACK, onFeedback);
 
     return () => {
       socket.off(SocketEvents.MATCH_STATE, onState);
       socket.off(SocketEvents.MATCH_RESULT, onResult);
       socket.off(SocketEvents.NARRATION, onNarration);
       socket.off(SocketEvents.ERROR, onError);
+      socket.off(SocketEvents.SETTLEMENT, onSettlement);
+      socket.off(SocketEvents.SPELL_FEEDBACK, onFeedback);
     };
-  }, [setMatch, setLastResult, setNarration, setError]);
+  }, [setMatch, setLastResult, setNarration, setError, setSettlement, setFeedback]);
 }
 
 // ── Typed emit helpers ───────────────────────────────────────────────────────
@@ -74,11 +89,15 @@ export function setStake(stake: number): void {
  * drop from a real submission. Times out after 5s if the server never
  * responds at all (e.g. a dead connection).
  */
-export function submitWord(word: string): Promise<SubmitWordAck> {
+export function submitWord(word: string, captures?: LetterCapture[]): Promise<SubmitWordAck> {
   return new Promise((resolve) => {
-    socket.timeout(5000).emit(SocketEvents.SUBMIT_WORD, { word }, (err: Error | null, ack?: SubmitWordAck) => {
-      resolve(err ? { error: 'No response from server — check your connection.' } : ack ?? {});
-    });
+    socket.timeout(8000).emit(
+      SocketEvents.SUBMIT_WORD,
+      { word, captures },
+      (err: Error | null, ack?: SubmitWordAck) => {
+        resolve(err ? { error: 'No response from server — check your connection.' } : ack ?? {});
+      },
+    );
   });
 }
 

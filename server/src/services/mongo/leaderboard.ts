@@ -21,19 +21,18 @@ export interface UpsertResultInput {
   displayName: string;
   deltaCoins: number;
   won: boolean;
-  avatarUrl?: string | null;
 }
 
-/** Record a completed match's outcome for a player (coins + W/L + optional avatar). */
+/** Record a completed match's outcome for a player (coins + W/L). */
 export async function upsertPlayerResult(input: UpsertResultInput): Promise<LeaderboardEntry> {
-  const { playerId, displayName, deltaCoins, won, avatarUrl } = input;
+  const { playerId, displayName, deltaCoins, won } = input;
 
   if (isMongoConnected()) {
     const doc = await PlayerModel.findOneAndUpdate(
       { playerId },
       {
         $setOnInsert: { playerId },
-        $set: { displayName, ...(avatarUrl !== undefined ? { avatarUrl } : {}) },
+        $set: { displayName },
         $inc: { totalCoins: deltaCoins, wins: won ? 1 : 0, losses: won ? 0 : 1 },
       },
       { upsert: true, new: true },
@@ -47,15 +46,14 @@ export async function upsertPlayerResult(input: UpsertResultInput): Promise<Lead
   const prev = memory.get(playerId) ?? {
     playerId,
     displayName,
-    avatarUrl: null,
     totalCoins: 0,
     wins: 0,
     losses: 0,
+    walletBalanceSol: null,
   };
   const next: LeaderboardEntry = {
     ...prev,
     displayName,
-    avatarUrl: avatarUrl !== undefined ? avatarUrl : prev.avatarUrl,
     totalCoins: prev.totalCoins + deltaCoins,
     wins: prev.wins + (won ? 1 : 0),
     losses: prev.losses + (won ? 0 : 1),
@@ -64,20 +62,9 @@ export async function upsertPlayerResult(input: UpsertResultInput): Promise<Lead
   return next;
 }
 
-/** Attach/replace a player's AI-generated avatar. */
-export async function setPlayerAvatar(playerId: string, avatarUrl: string): Promise<void> {
-  if (isMongoConnected()) {
-    await PlayerModel.updateOne({ playerId }, { $set: { avatarUrl } });
-    return;
-  }
-  const entry = memory.get(playerId);
-  if (entry) entry.avatarUrl = avatarUrl;
-}
-
 function toEntry(doc: {
   playerId: string;
   displayName: string;
-  avatarUrl?: string | null;
   totalCoins?: number;
   wins?: number;
   losses?: number;
@@ -85,9 +72,10 @@ function toEntry(doc: {
   return {
     playerId: doc.playerId,
     displayName: doc.displayName,
-    avatarUrl: doc.avatarUrl ?? null,
     totalCoins: doc.totalCoins ?? 0,
     wins: doc.wins ?? 0,
     losses: doc.losses ?? 0,
+    // Live balance is attached by the leaderboard route, not stored in Mongo.
+    walletBalanceSol: null,
   };
 }

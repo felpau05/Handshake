@@ -10,6 +10,8 @@ import { judgeRound, type WordJudgment } from '../services/gemini/geminiClient.j
 export interface ResolveInput {
   prompt: string;
   words: Record<PlayerSlot, string | null>;
+  /** Display names, purely for narration flavor ("Marc's OCEAN sinks Paul's WE"). */
+  names?: Record<PlayerSlot, string>;
 }
 
 export interface ResolveOutput {
@@ -21,13 +23,13 @@ export interface ResolveOutput {
 
 /** Judge both words together and reshape the result for GameRoom. */
 export async function resolveWordBattle(input: ResolveInput): Promise<ResolveOutput> {
-  const { prompt, words } = input;
+  const { prompt, words, names } = input;
   const normalized: Record<PlayerSlot, string> = {
     p1: normalizeWord(words.p1 ?? ''),
     p2: normalizeWord(words.p2 ?? ''),
   };
 
-  const judgment = await judgeRound(prompt, normalized);
+  const judgment = await judgeRound(prompt, normalized, names);
 
   return {
     winner: judgment.roundWinner,

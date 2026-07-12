@@ -16,6 +16,7 @@ const noopCb: GameRoomCallbacks = {
   speak: async () => null,
   settleMatch: async () => {},
   collectEscrow: async () => {},
+  deliverSpellFeedback: async () => {},
 };
 
 /** Drive a fresh room to the SPELL phase (ready → stake → prompt → spell). */

@@ -7,7 +7,7 @@
 //   3. suggestMove()    → a hint of a good word to sign ("says what move to use")
 // All degrade gracefully: with no GEMINI_API_KEY they return canned/stub results
 // so the game is fully playable offline. Fill in prompt tuning where marked TODO.
-import type { PlayerSlot } from '@app/shared';
+import type { LetterCapture, PlayerSlot, PlayerSpellFeedback } from '@app/shared';
 import { env } from '../../config/env.js';
 import { createGeminiClient } from './client.js';
 
@@ -40,17 +40,19 @@ export interface RoundJudgment {
 export async function announcePrompt(prompt: string, suddenDeath: boolean): Promise<string> {
   if (!ai) return cannedPromptLine(prompt, suddenDeath);
   const flavor = suddenDeath
-    ? 'This is SUDDEN DEATH — raise the stakes, sound a little unhinged about it. '
+    ? 'This is SUDDEN DEATH — the last round was a dead heat and you can barely believe it. Raise the stakes, sound a little unhinged. '
     : '';
   const res = await ai.models.generateContent({
     model: env.GEMINI_MODEL,
     contents:
-      `You're a snarky, high-energy game-show host with zero patience for boring ` +
-      `words. ${flavor}The theme is "${prompt}". In ONE short, funny sentence, ` +
-      `reveal it and dare both players to sign the biggest, most impressive ` +
-      `related word they've got — sound like you're already expecting someone to ` +
-      `embarrass themselves. No emojis, no markdown/asterisks — this gets read ` +
-      `aloud and shown as plain text.`,
+      `You're the host of a fingerspelling word battle: quick-witted, theatrical, ` +
+      `a little too invested — think a boxing announcer who moonlights at a spelling ` +
+      `bee. ${flavor}The theme is "${prompt}". In ONE short sentence (under 25 words), ` +
+      `reveal the theme with a specific, vivid jab or image drawn from the theme ` +
+      `itself — not a generic "give me your best word" line — and dare the players ` +
+      `to bring something impressive. Vary your rhythm; don't start with "Alright" ` +
+      `or "Ladies and gentlemen". No emojis, no markdown/asterisks — this gets ` +
+      `read aloud and shown as plain text.`,
   });
   return (res.text ?? cannedPromptLine(prompt, suddenDeath)).trim();
 }
@@ -66,36 +68,49 @@ export async function announcePrompt(prompt: string, suddenDeath: boolean): Prom
 export async function judgeRound(
   prompt: string,
   words: Record<PlayerSlot, string>,
+  names?: Record<PlayerSlot, string>,
 ): Promise<RoundJudgment> {
   const stub = stubJudgment(prompt, words);
   if (!ai) return stub;
 
+  const n1 = names?.p1 || 'Player 1';
+  const n2 = names?.p2 || 'Player 2';
   try {
     const res = await ai.models.generateContent({
       model: env.GEMINI_MODEL,
       contents:
-        `You are a witty, slightly savage judge and hype host for an ASL ` +
-        `fingerspelling word battle — think game-show host crossed with a roast ` +
-        `comedian, but the roasting is aimed at the WORD CHOICES, never at the ` +
-        `players themselves. ` +
+        `You are the judge and host of an ASL fingerspelling word battle — ` +
+        `sharp, theatrical, and gleefully unimpressed by lazy word choices. ` +
+        `Roast the WORD CHOICES, never the players themselves. ` +
         `The theme is "${prompt}". ` +
-        `Player 1 signed "${words.p1 || '(nothing)'}". ` +
-        `Player 2 signed "${words.p2 || '(nothing)'}". ` +
-        `For each player, judge: valid (a real English word), complexity ` +
-        `(0-10, how sophisticated/impressive the word is), relatedness (0-10, ` +
-        `how well it relates to the theme; 0 if invalid), and a short, funny, ` +
-        `punchy verdict line reacting to THAT specific word — roast a weak or ` +
-        `unrelated pick, hype up a clever one. ` +
-        `Then decide roundWinner ("p1" or "p2") by weighing validity, ` +
-        `relatedness, and complexity together — an invalid or unrelated word ` +
-        `must lose to a valid related one regardless of raw length. If it's a ` +
-        `genuine toss-up (both equally strong, or both weak/invalid), ` +
-        `roundWinner is null. ` +
-        `Finally write ONE short, funny, snarky sentence of narration that ` +
-        `actually reacts to what happened: if there's a winner, name both ` +
-        `words and razz the loser's pick while hyping the winner's; if ` +
-        `roundWinner is null, lean into the anticlimax of a dead-even standoff ` +
-        `and tease that it's headed to sudden death — do NOT declare a winner ` +
+        `Player 1 is named ${n1} and signed "${words.p1 || '(nothing)'}". ` +
+        `Player 2 is named ${n2} and signed "${words.p2 || '(nothing)'}". ` +
+        `VALIDITY IS STRICT — a word is valid ONLY if ALL of these hold: ` +
+        `(a) it is a real English word, ` +
+        `(b) it has a genuine, explainable connection to the theme "${prompt}" ` +
+        `— if you can't state the connection in a few words, it is NOT valid, ` +
+        `(c) it is not a generic filler or function word (pronouns, articles, ` +
+        `conjunctions, prepositions — "we", "the", "it", "and", "of" and the ` +
+        `like are NEVER valid, no matter the theme). ` +
+        `Merely being a real word is NOT enough; an off-theme word is invalid ` +
+        `even if it is long and impressive. When in doubt about relatedness, ` +
+        `rule it invalid. ` +
+        `For each player, judge: valid (per the strict rules above), complexity ` +
+        `(0-10, how sophisticated/impressive the word is; 0 if invalid), ` +
+        `relatedness (0-10, how strong its connection to the theme is; 0 if ` +
+        `invalid, and any valid word must score at least 4), and a short, ` +
+        `punchy verdict line reacting to THAT specific word — name the ` +
+        `connection when hyping a clever pick, and when roasting a dud, say ` +
+        `WHY it failed (off-theme, filler, not a word). ` +
+        `Then decide roundWinner ("p1" or "p2") by weighing validity first, ` +
+        `then relatedness, then complexity — an invalid word always loses to a ` +
+        `valid one regardless of length. If both are equally strong or both ` +
+        `invalid, roundWinner is null. ` +
+        `Finally write ONE sentence of narration (under 30 words) that reacts ` +
+        `to what actually happened, using the players' NAMES and both words: ` +
+        `crown the winner's pick with a specific compliment and needle the ` +
+        `loser's with a specific dig; if roundWinner is null, milk the ` +
+        `dead-even standoff and tease sudden death — do NOT declare a winner ` +
         `in that line. Every string value (verdict, narration) is plain text, ` +
         `read aloud and shown as-is — no markdown, no asterisks, no emojis. ` +
         `Respond with ONLY strict JSON, no prose, no markdown fences, in exactly ` +
@@ -110,6 +125,152 @@ export async function judgeRound(
       err instanceof Error ? err.message.split('\n')[0] : err,
     );
     return stub;
+  }
+}
+
+/** Input for the match-end signing coach (see generateSpellFeedback). */
+export interface SpellFeedbackRequest {
+  playerId: string;
+  displayName: string;
+  prompt: string;
+  word: string;
+  captures: LetterCapture[];
+}
+
+/**
+ * Match-end signing coach: given a player's submitted word, the round theme,
+ * and the per-letter webcam captures (photo of the hand at the moment each
+ * letter committed + detector confidence), one multimodal Gemini call works
+ * out what word they were TRYING to spell, which letters missed, and concrete
+ * handshape advice per problem letter. Never throws — degrades to a friendly
+ * canned message so MATCH_END always has something to show.
+ */
+export async function generateSpellFeedback(
+  input: SpellFeedbackRequest,
+): Promise<PlayerSpellFeedback> {
+  const { playerId, displayName, prompt, word, captures } = input;
+  const fallback = stubSpellFeedback(input);
+  if (!ai || !word) return fallback;
+
+  // Letter roster for the text prompt; images attached after, in the same
+  // order, so "photo N" unambiguously means captures[N] / word[N].
+  const withImages = captures.filter((c) => c.image);
+  const roster = captures
+    .map((c, i) => {
+      const conf = c.confidence !== null ? `${Math.round(c.confidence * 100)}% detector confidence` : 'typed on keyboard, no photo';
+      return `${i}: "${c.letter}" (${conf}${c.image ? ', photo attached' : ''})`;
+    })
+    .join('\n');
+
+  try {
+    const parts: ({ text: string } | { inlineData: { mimeType: string; data: string } })[] = [
+      {
+        text:
+          `You are a supportive but precise ASL fingerspelling coach reviewing one ` +
+          `player's final round in a word battle. ` +
+          `The round theme was "${prompt}". The player, ${displayName}, submitted the ` +
+          `word "${word}" letter by letter using ASL handshapes read by a detector. ` +
+          `Per-letter detector log (index: letter):\n${roster || '(no capture log — keyboard entry)'}\n` +
+          `${withImages.length ? `The ${withImages.length} attached photo(s) show the player's actual hand at the moment each photographed letter committed, in the same order as the log entries marked "photo attached".` : 'No photos are attached.'}\n` +
+          `Your job, in order: ` +
+          `(1) Decide what real English word related to "${prompt}" they were most ` +
+          `likely TRYING to spell — the submission may contain detector misreads ` +
+          `(common confusions: A/S/T/N/M, U/V/R, D/F, E/O). If the submission is ` +
+          `already a correctly spelled real word, the intended word is itself. If ` +
+          `you genuinely cannot tell what they were going for, it is nonsense. ` +
+          `(2) List the 0-based indices where the submitted word differs from the ` +
+          `intended word (wrong, extra, or garbled letters — for missing letters, ` +
+          `skip the index list rather than guessing). ` +
+          `(3) For up to 4 letters that went wrong OR had low confidence, give a ` +
+          `short concrete handshape tip (what the hand LIKELY did vs what the ` +
+          `target letter needs — use the photos when attached; e.g. "your E is ` +
+          `reading as A: curl your fingertips down to touch your thumb instead of ` +
+          `closing a fist"). ` +
+          `(4) Write ONE friendly headline sentence addressed to ${displayName} — ` +
+          `celebrate a clean word, encourage a near-miss naming the intended word, ` +
+          `or gently note an unreadable one. ` +
+          `All strings are plain text, no markdown, no emojis. ` +
+          `Respond with ONLY strict JSON, no fences: ` +
+          `{"intendedWord":string|null,"nonsense":boolean,"misspelledIndices":number[],` +
+          `"tips":[{"index":number,"letter":string,"tip":string}],"message":string}`,
+      },
+    ];
+    for (const c of withImages) {
+      parts.push({ inlineData: { mimeType: 'image/jpeg', data: c.image!.split(',')[1] } });
+    }
+
+    const res = await ai.models.generateContent({
+      model: env.GEMINI_MODEL,
+      contents: [{ role: 'user', parts }],
+    });
+    return parseSpellFeedback(res.text ?? '', input) ?? fallback;
+  } catch (err) {
+    console.warn(
+      '[gemini] generateSpellFeedback failed, using canned feedback:',
+      err instanceof Error ? err.message.split('\n')[0] : err,
+    );
+    return fallback;
+  }
+}
+
+/** Canned feedback when Gemini is unavailable — a message always shows. */
+function stubSpellFeedback(input: SpellFeedbackRequest): PlayerSpellFeedback {
+  const { playerId, word, displayName } = input;
+  return {
+    playerId,
+    word,
+    intendedWord: word.length >= 2 ? word : null,
+    nonsense: word.length < 2,
+    misspelledIndices: [],
+    tips: [],
+    message: word
+      ? `Nice signing, ${displayName} — "${word}" made it through cleanly.`
+      : `No word made it in this round, ${displayName} — hold each letter steady until it commits.`,
+  };
+}
+
+/** Parses generateSpellFeedback's JSON; null on mismatch → canned fallback. */
+function parseSpellFeedback(text: string, input: SpellFeedbackRequest): PlayerSpellFeedback | null {
+  try {
+    const match = text.match(/\{[\s\S]*\}/);
+    if (!match) return null;
+    const j = JSON.parse(match[0]) as Record<string, unknown>;
+    const message = typeof j.message === 'string' && j.message ? j.message : null;
+    if (!message) return null;
+    const nonsense = Boolean(j.nonsense);
+    const intendedWord =
+      !nonsense && typeof j.intendedWord === 'string' && j.intendedWord
+        ? j.intendedWord.toUpperCase()
+        : null;
+    const inWord = (n: unknown): n is number =>
+      typeof n === 'number' && Number.isInteger(n) && n >= 0 && n < input.word.length;
+    const misspelledIndices = Array.isArray(j.misspelledIndices)
+      ? j.misspelledIndices.filter(inWord)
+      : [];
+    const tips = (Array.isArray(j.tips) ? j.tips : [])
+      .map((t) => {
+        const o = (t ?? {}) as Record<string, unknown>;
+        if (!inWord(o.index) || typeof o.tip !== 'string' || !o.tip) return null;
+        return {
+          index: o.index,
+          letter: typeof o.letter === 'string' && o.letter ? o.letter : input.word[o.index],
+          tip: o.tip,
+        };
+      })
+      .filter((t): t is NonNullable<typeof t> => t !== null)
+      .slice(0, 4);
+    return {
+      playerId: input.playerId,
+      word: input.word,
+      intendedWord,
+      nonsense,
+      // Nonsense submissions get the message only — no letter-level nitpicks.
+      misspelledIndices: nonsense ? [] : misspelledIndices,
+      tips: nonsense ? [] : tips,
+      message,
+    };
+  } catch {
+    return null;
   }
 }
 
@@ -173,6 +334,15 @@ export function stubJudgment(prompt: string, words: Record<PlayerSlot, string>):
   return { player1, player2, roundWinner, narration };
 }
 
+/** Generic filler/function words that can never win a theme round, no matter
+ *  what the model says — the deterministic backstop for the prompt's rule. */
+const FILLER_WORDS = new Set([
+  'a', 'an', 'the', 'i', 'we', 'he', 'she', 'it', 'they', 'you', 'me', 'us',
+  'my', 'our', 'your', 'his', 'her', 'its', 'and', 'or', 'but', 'so', 'if',
+  'of', 'to', 'in', 'on', 'at', 'by', 'as', 'is', 'am', 'are', 'was', 'be',
+  'do', 'did', 'no', 'yes', 'not', 'this', 'that', 'them',
+]);
+
 /** Parses judgeRound's expected JSON shape; returns null on any mismatch so
  *  the caller falls back to the offline stub instead of trusting garbage. */
 function parseRoundJudgment(text: string, words: Record<PlayerSlot, string>): RoundJudgment | null {
@@ -185,19 +355,35 @@ function parseRoundJudgment(text: string, words: Record<PlayerSlot, string>): Ro
     // "(nothing)" placeholder we send for prompt context on an empty word).
     const toJudgment = (raw: unknown, actualWord: string): WordJudgment => {
       const o = (raw ?? {}) as Record<string, unknown>;
-      const valid = Boolean(o.valid);
+      // Enforce the strict rules even if the model waves a word through:
+      // empty/one-letter submissions never pass (the model sometimes blesses
+      // our "(nothing)" placeholder), filler/function words never pass, and
+      // "valid but barely related" (relatedness < 4) resolves as invalid.
+      const relatedness = clamp0to10(o.relatedness);
+      const valid =
+        Boolean(o.valid) &&
+        actualWord.length >= 2 &&
+        !FILLER_WORDS.has(actualWord.toLowerCase()) &&
+        relatedness >= 4;
       return {
         word: actualWord,
         valid,
         complexity: valid ? clamp0to10(o.complexity) : 0,
-        relatedness: valid ? clamp0to10(o.relatedness) : 0,
+        relatedness: valid ? relatedness : 0,
         verdict: typeof o.verdict === 'string' ? o.verdict : '',
       };
     };
-    const roundWinner = j.roundWinner === 'p1' || j.roundWinner === 'p2' ? j.roundWinner : null;
+    const player1 = toJudgment(j.player1, words.p1);
+    const player2 = toJudgment(j.player2, words.p2);
+    let roundWinner: PlayerSlot | null =
+      j.roundWinner === 'p1' || j.roundWinner === 'p2' ? j.roundWinner : null;
+    // Our validity backstop may have overruled the model (e.g. it crowned a
+    // filler word) — never let an invalid word keep a win over a valid one.
+    if (roundWinner === 'p1' && !player1.valid) roundWinner = player2.valid ? 'p2' : null;
+    if (roundWinner === 'p2' && !player2.valid) roundWinner = player1.valid ? 'p1' : null;
     return {
-      player1: toJudgment(j.player1, words.p1),
-      player2: toJudgment(j.player2, words.p2),
+      player1,
+      player2,
       roundWinner,
       narration: typeof j.narration === 'string' && j.narration ? j.narration : '',
     };

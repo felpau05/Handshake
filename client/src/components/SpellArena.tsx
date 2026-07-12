@@ -8,6 +8,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { HandLandmarker, DrawingUtils } from '@mediapipe/tasks-vision';
 import type { LetterEvent } from '@app/asl';
+import type { LetterCapture } from '@app/shared';
 import { useMediaStore } from '../state/mediaStore.js';
 import { useWaveDelete } from '../hooks/useWaveDelete.js';
 import { submitWord, sendSpellProgress } from '../hooks/useSocket.js';
@@ -52,6 +53,52 @@ export function SpellArena() {
     doSubmitRef.current = (auto) => void doSubmit(auto);
   });
 
+  // Per-letter captures backing the word, for the match-end signing coach.
+  // `capturesRef` stays index-aligned with `word` via the reconcile effect
+  // below; `pendingCaptureRef` holds the snapshot taken at the instant the
+  // detector committed a letter, until that letter lands in `word`.
+  const capturesRef = useRef<LetterCapture[]>([]);
+  const pendingCaptureRef = useRef<LetterCapture | null>(null);
+  const snapCanvasRef = useRef<HTMLCanvasElement | null>(null);
+
+  /** Small mirrored JPEG of the current video frame (the hand mid-sign). */
+  const snapshotFrame = (): string | null => {
+    const video = videoRef.current;
+    if (!video || !video.videoWidth) return null;
+    const canvas = (snapCanvasRef.current ??= document.createElement('canvas'));
+    const w = 240;
+    const h = Math.round((video.videoHeight / video.videoWidth) * w);
+    canvas.width = w;
+    canvas.height = h;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return null;
+    // Mirror to match the on-screen selfie view.
+    ctx.save();
+    ctx.translate(w, 0);
+    ctx.scale(-1, 1);
+    ctx.drawImage(video, 0, 0, w, h);
+    ctx.restore();
+    return canvas.toDataURL('image/jpeg', 0.55);
+  };
+
+  // Keep captures aligned with the word: a grown word consumes the pending
+  // detector capture (or records a capture-less keyboard letter); a shrunk
+  // word (wave/Backspace delete) drops the tail captures with it.
+  useEffect(() => {
+    const captures = capturesRef.current;
+    while (word.length > captures.length) {
+      const letter = word[captures.length];
+      const pending = pendingCaptureRef.current;
+      if (pending && pending.letter === letter) {
+        captures.push(pending);
+        pendingCaptureRef.current = null;
+      } else {
+        captures.push({ letter, confidence: null, timestamp: Date.now(), image: null });
+      }
+    }
+    if (word.length < captures.length) captures.length = word.length;
+  }, [word]);
+
   // Attach the already-warm stream to this mount's own <video> element.
   useEffect(() => {
     if (stream && videoRef.current) {
@@ -82,6 +129,15 @@ export function SpellArena() {
         return;
       }
       if (e.letter.length !== 1) return; // future control labels never leak into the word
+      // Photograph the hand NOW, while it's still holding the sign that just
+      // committed — by the next render it may already be moving away. The
+      // reconcile effect pairs this with the letter once it lands in `word`.
+      pendingCaptureRef.current = {
+        letter: e.letter,
+        confidence: e.confidence,
+        timestamp: e.timestamp,
+        image: snapshotFrame(),
+      };
       setWord((w) => (w.length < 20 ? w + e.letter : w));
     };
     const unsubLetter = detector.on('letter', onLetter);
@@ -165,7 +221,11 @@ export function SpellArena() {
     // wordRef, not `word`: this function is also invoked through stale
     // closures (countdown expiry, Enter, the SUBMIT gesture) whose captured
     // `word` may be many letters behind.
-    const ack = await submitWord(wordRef.current);
+    // Captures ride along for the match-end signing coach; the local copy is
+    // kept in the store so the feedback card can show MY hand photos without
+    // them round-tripping through the server.
+    const captures = capturesRef.current.slice(0, wordRef.current.length);
+    const ack = await submitWord(wordRef.current, captures);
     setSubmitting(false);
     if (ack.error) {
       // On the auto-submit at timeout, "window closed" just means the server's
@@ -174,6 +234,7 @@ export function SpellArena() {
       if (!auto) setSubmitError(ack.error);
       return;
     }
+    useGameStore.getState().setMyCaptures(captures);
     setSubmitted(true);
   };
 

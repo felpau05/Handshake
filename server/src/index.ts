@@ -12,7 +12,6 @@ import { Server } from 'socket.io';
 import { env } from './config/env.js';
 import { registerSocketHandlers } from './sockets/handlers.js';
 import { leaderboardRouter } from './routes/leaderboard.js';
-import { elevenlabsTestRouter } from './routes/elevenlabsTest.js';
 import { authRouter } from './routes/auth.js';
 import { connectMongo } from './services/mongo/connection.js';
 import { prewarmFillerNarration } from './game/fillerNarration.js';
@@ -27,7 +26,6 @@ app.use(express.json());
 app.get('/api/health', (_req, res) => res.json({ ok: true }));
 app.use('/api/auth', authRouter);
 app.use('/api/leaderboard', leaderboardRouter);
-app.use('/api/test', elevenlabsTestRouter);
 
 // Serve the built client in production (single-origin deploy for two laptops).
 // Points at the client workspace's Vite build output (client/dist).
@@ -55,6 +53,9 @@ app.get('*', (req, res, next) => {
 const httpServer = createServer(app);
 const io = new Server(httpServer, {
   cors: { origin: env.CLIENT_ORIGIN, methods: ['GET', 'POST'], credentials: true },
+  // SUBMIT_WORD can carry up to 20 small per-letter JPEG captures for the
+  // match-end signing feedback — the 1MB default cuts it close.
+  maxHttpBufferSize: 8e6,
 });
 registerSocketHandlers(io);
 
