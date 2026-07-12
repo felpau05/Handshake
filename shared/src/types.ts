@@ -2,7 +2,7 @@
 // Shared contract between client and server for ASL Word Battle.
 // Both workspaces import these types so the socket protocol and game state stay
 // in sync. Keep this file dependency-free (pure types + small const objects).
-// The ASL letter recognition itself lives in @cuhack/asl-detector (client-only);
+// The ASL letter recognition itself lives in @app/asl (client-only);
 // the server only ever sees the final assembled word string.
 // ─────────────────────────────────────────────────────────────────────────────
 

@@ -7,6 +7,7 @@
   "workspaces": [
     "shared",
     "asl-detector",
+    "asl",
     "server",
     "client"
   ],
@@ -14,7 +15,7 @@
     "dev": "concurrently -n server,client -c blue,magenta \"npm -w server run dev\" \"npm -w client run dev\"",
     "build": "npm -w client run build",
     "start": "npm -w server run start",
-    "typecheck": "npm -w shared run typecheck && npm -w @cuhack/asl-detector run typecheck && npm -w server run typecheck && npm -w client run typecheck",
+    "typecheck": "npm -w shared run typecheck && npm -w @app/asl run typecheck && npm -w server run typecheck && npm -w client run typecheck",
     "test": "npm -w server run test"
   },
   "devDependencies": {

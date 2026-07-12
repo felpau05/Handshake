@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>ASL Detector — Demo</title>
+    <style>
+      :root { color-scheme: dark; }
+      body { margin: 0; font-family: system-ui, sans-serif; background: #111; color: #eee; padding: 24px; display: grid; grid-template-columns: 640px 1fr; gap: 24px; }
+      video { width: 640px; border-radius: 8px; background: #000; transform: scaleX(-1); }
+      h1 { font-size: 20px; margin: 0 0 8px; }
+      #word { font-size: 56px; font-weight: 700; letter-spacing: 6px; min-height: 70px; word-break: break-all; }
+      #last { font-size: 15px; color: #9ae6b4; min-height: 22px; }
+      #status { color: #f6ad55; }
+      button { background: #2b6cb0; color: #fff; border: 0; padding: 10px 16px; border-radius: 6px; cursor: pointer; margin-right: 8px; }
+      .note { color: #888; font-size: 13px; line-height: 1.6; margin-top: 16px; }
+    </style>
+  </head>
+  <body>
+    <div>
+      <video id="video" playsinline muted></video>
+      <div id="status">Loading…</div>
+    </div>
+    <div>
+      <h1>ASL fingerspelling — demo consumer</h1>
+      <div id="word"></div>
+      <div id="last"></div>
+      <p><button id="clear">Clear</button></p>
+      <div id="hud" style="font-family:monospace;font-size:15px;line-height:1.8;background:#1a1a1a;border-radius:8px;padding:12px 14px;margin-top:8px">
+        <div>hand detected: <b id="hud-hand">—</b></div>
+        <div>top prediction: <b id="hud-pred">—</b> @ <b id="hud-conf">—</b></div>
+        <div>hand-detection rate: <b id="hud-rate">—</b> <span style="color:#888">(last 100 frames)</span></div>
+        <div style="color:#888;font-size:13px;margin-top:6px">Commits only when confidence ≥ 85% held for 0.6s.</div>
+      </div>
+      <h2 style="font-size:15px;color:#bbb;margin:18px 0 8px">Events emitted (what a backend receives)</h2>
+      <pre id="events" style="background:#0d0d0d;border-radius:8px;padding:12px;font-size:13px;line-height:1.6;max-height:180px;overflow:auto;color:#9ae6b4">// waiting for a committed letter…</pre>
+      <h2 style="font-size:15px;color:#bbb;margin:18px 0 8px">Captured frame per committed letter</h2>
+      <div id="captures" style="display:flex;flex-wrap:wrap;gap:8px"></div>
+      <p class="note">
+        This page is a <em>consumer</em> of the detector module: it just subscribes to
+        <code>on('letter', …)</code> and appends letters. Word assembly lives here in the demo,
+        not in the module. Detection needs a trained model at <code>asl/model/model.json</code>.
+      </p>
+    </div>
+    <script type="module" src="./demo/demo.ts"></script>
+  </body>
+</html>

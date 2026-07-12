@@ -3,7 +3,7 @@
 // submit. The detector is a black box that emits deduped LetterEvents; this
 // component turns them into a word and sends only the final string to the server.
 import { useEffect, useRef, useState } from 'react';
-import { createAslDetector, type AslDetector, type LetterEvent } from '@cuhack/asl-detector';
+import { createAslDetector, type AslDetector, type LetterEvent } from '@app/asl';
 import { useCamera } from '../hooks/useCamera.js';
 import { useWaveDelete } from '../hooks/useWaveDelete.js';
 import { submitWord, sendSpellProgress } from '../hooks/useSocket.js';
@@ -31,9 +31,14 @@ export function SpellArena() {
   // Wire the ASL detector once the camera is ready.
   useEffect(() => {
     if (status !== 'ready' || detectorRef.current) return;
-    const detector = createAslDetector({ minConfidence: 0.85, holdMs: 600 });
+    const detector = createAslDetector({
+      minConfidence: 0.85,
+      holdMs: 600,
+      modelUrl: '/asl-model/model.json',
+    });
     detectorRef.current = detector;
     let disposed = false;
+    let unsubscribe: (() => void) | null = null;
 
     const onLetter = (e: LetterEvent) => setWord((w) => (w.length < 20 ? w + e.letter : w));
 
@@ -42,7 +47,7 @@ export function SpellArena() {
         await detector.init();
         if (disposed) return detector.destroy();
         detector.attachVideo(videoRef.current!);
-        detector.on('letter', onLetter);
+        unsubscribe = detector.on('letter', onLetter);
         detector.start();
         setDetectorReady(true);
       } catch {
@@ -52,7 +57,7 @@ export function SpellArena() {
 
     return () => {
       disposed = true;
-      detector.off('letter', onLetter);
+      unsubscribe?.();
       detector.destroy();
       detectorRef.current = null;
     };

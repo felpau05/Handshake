@@ -18,3 +18,11 @@ server/scripts/output/
 
 # Teammate's separate clone — its own git repo, out of scope for this project.
 CU-Hackathon-2026/
+archive/
+archive/
+archive.zip
+asl/venv/
+venv/
+__pycache__/
+*.pyc
+*:Zone.Identifier

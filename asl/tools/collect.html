@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>ASL — Data Collection</title>
+    <style>
+      :root { color-scheme: dark; }
+      body {
+        margin: 0; font-family: system-ui, sans-serif; background: #111; color: #eee;
+        display: grid; grid-template-columns: 640px 1fr; gap: 20px; padding: 20px;
+      }
+      h1 { font-size: 18px; margin: 0 0 10px; }
+      video { width: 640px; border-radius: 8px; background: #000; transform: scaleX(-1); }
+      #label { font-size: 72px; font-weight: 700; text-align: center; margin: 6px 0; }
+      #hint { color: #9ae6b4; min-height: 20px; }
+      .counts { display: grid; grid-template-columns: repeat(6, 1fr); gap: 6px; margin-top: 10px; }
+      .cell { background: #1e1e1e; border-radius: 6px; padding: 8px; text-align: center; font-size: 13px; }
+      .cell b { display: block; font-size: 16px; }
+      .cell.has { background: #22402e; }
+      kbd { background: #333; border-radius: 4px; padding: 1px 6px; font-family: monospace; }
+      button { background: #2b6cb0; color: #fff; border: 0; padding: 10px 14px; border-radius: 6px; cursor: pointer; font-size: 14px; }
+      .rec { color: #fc8181; font-weight: 700; }
+      ul { padding-left: 18px; line-height: 1.6; font-size: 14px; color: #bbb; }
+    </style>
+  </head>
+  <body>
+    <div>
+      <video id="video" playsinline muted></video>
+      <div id="label">—</div>
+      <div id="hint">Loading MediaPipe…</div>
+    </div>
+    <div>
+      <h1>ASL fingerspelling — data collection</h1>
+      <ul>
+        <li>Press a <kbd>letter</kbd> key (A–Z, no J/Z) to select the target.</li>
+        <li>Hold <kbd>Space</kbd> to record samples while posing that letter.</li>
+        <li><kbd>Backspace</kbd> undo last · <kbd>S</kbd> download <code>landmarks.json</code>.</li>
+        <li>Aim for ~50–150 per letter, varying hand position &amp; angle.</li>
+      </ul>
+      <p>Total samples: <b id="total">0</b> · <span id="status">no hand</span></p>
+      <div class="counts" id="counts"></div>
+      <p style="margin-top:16px"><button id="download">Download landmarks.json</button></p>
+    </div>
+    <script type="module" src="./collect.ts"></script>
+  </body>
+</html>
