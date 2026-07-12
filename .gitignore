@@ -31,3 +31,4 @@ asl/data/dataset_merged.json
 asl/data/landmarks.json
 asl/model/_backup_pre_merge/
 ASL-Alphabet-ASDC-web.jpg
+*.bak*
