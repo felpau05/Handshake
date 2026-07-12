@@ -1,209 +1,214 @@
-# Gamemaster RPS — Dev Handoff
+# HANDOFF — ASL Word Battle (CU Hackathon 2026)
 
-A two-laptop, camera-driven Rock-Paper-Scissors game with an AI gamemaster. This
-doc gets a new dev productive fast: how to run it, how it's wired, and exactly
-where to plug in each feature.
+Context doc so a new agent/dev can take over fast. Rewritten 2026-07-12 after a
+long debugging session (the previous version of this file described the old
+Rock-Paper-Scissors game — the project has since pivoted).
 
-> **Status:** full skeleton is built, typechecks, tests pass (11/11), and a full
-> best-of-5 match runs end-to-end on mocks with **zero API keys**. Everything
-> below is either done ✅ or a clearly-scoped TODO with a file to open.
+## 1. What this is
 
----
+A 2-player, camera-driven **ASL fingerspelling word battle**. Players get a
+theme (e.g. "music"), fingerspell the best related word they can in 25s using
+ASL letters at their webcam, and a Gemini gamemaster judges + narrates
+(ElevenLabs voice). Wagers settle in SOL on Solana devnet. MongoDB leaderboard.
 
-## 1. Get it running (2 minutes)
+**Demo topology:** ONE laptop runs the server (felpau's, WSL2), TWO other
+laptops are players, all through a single **ngrok HTTPS tunnel** to port 3001.
+The server serves the built client (`client/dist`), so one URL covers
+everything. HTTPS is load-bearing: `getUserMedia` requires a secure context —
+plain LAN `http://` silently blocks the camera.
+
+## 2. Repo layout (npm workspaces)
+
+```
+shared/   Types + SocketEvents protocol — the client/server contract.
+asl/      @app/asl — drop-in browser ASL detector module + data tools:
+          MediaPipe HandLandmarker → normalize.ts (wrist-origin/scale/mirror)
+          → tfjs MLP classifier → StabilityFilter → deduped 'letter' events.
+          Also: collect tool, trainers, datasets, standalone demo.
+server/   Express + Socket.IO. game/GameRoom.ts is the AUTHORITATIVE match
+          state machine. Runs via tsx directly from src — no compile step.
+client/   React + Vite + zustand game UI. Served as static build in prod.
+```
+
+**The one rule that matters:** the server owns all game state. Clients only
+send intents (ready, stake, submit word, spell-ready); the server validates
+and broadcasts `MatchState`. Never put game logic in the client.
+
+**Add a socket event?** Name in `SocketEvents` + payload type in
+`shared/src/types.ts` first, then `server/src/sockets/handlers.ts`, then
+`client/src/hooks/useSocket.ts`.
+
+## 3. Commands
 
 ```bash
-npm install                     # installs all 3 workspaces
-npm run dev                     # server :3001 + client :5173
+npm run dev              # dev mode: server + vite client, hot reload
+npm run build            # builds client/dist — THE step that updates what players see
+npm start                # server :3001 (serves client/dist + API + sockets, via tsx)
+npx ngrok http 3001      # share the https URL with players
+npm run typecheck        # all 4 workspaces
+npm -w server run test   # server tests (incl. regression tests, see §6)
+
+# ASL model pipeline (from asl/):
+npm -w asl run collect                                # /tools/collect.html — record samples
+node tools/train_node.mjs data/dataset_merged.json    # retrain (~4 min with tfjs-node)
+npm -w asl run demo                                   # standalone detector demo + HUD
 ```
 
-Open **http://localhost:5173 in two browser tabs**. In tab 1: enter a name →
-*Create match* → you get a 4-letter room code. In tab 2: enter a name + the code
-→ *Join*. Both *ready up* → shop → play. No keys needed — narration is canned,
-voice is silent, images pass through, coins/leaderboard are in-memory.
+## 4. Match flow + the readiness gate
 
-Useful scripts (run from repo root):
+Phases: `LOBBY → STAKE → PROMPT → SPELL → RESOLVE → (sudden death | MATCH_END)`.
+Key server tunables at the top of `GameRoom.ts` (`SPELL_DURATION_MS` 25s,
+`SPELL_READY_MAX_WAIT_MS` 8s, `MAX_SUDDEN_DEATH` 3).
 
-| Command | What it does |
-|---|---|
-| `npm run dev` | Server + client with hot reload |
-| `npm run build` | Typecheck server/shared + build the client bundle |
-| `npm run typecheck` | Typecheck all workspaces |
-| `npm test` | Server unit tests (rules + resolver) |
+**Readiness gate (hard-won):** after the PROMPT narration, the server holds
+the round until BOTH clients emit `SPELL_READY` (8s cap so nobody stalls the
+match), only then opens SPELL and starts the timer. Clients emit it (effect in
+`App.tsx`) when `detectorReady && cameraStatus === 'ready'`. `detectorReady`
+(`client/src/state/mediaStore.ts`) is only set after full GPU warmup — see §5.
 
----
+Camera + detector are warmed ONCE at app load (`mediaStore.warm()` via
+`useMediaWarmup` in Root.tsx); `SpellArena` only attaches to them.
 
-## 2. How it fits together
+## 5. The 10-second-freeze saga (READ before touching perf)
 
-```
-Laptop A (browser)                         Laptop B (browser)
- getUserMedia → MediaPipe Hand Landmarker   getUserMedia → MediaPipe Hand Landmarker
- local gesture classify (→ Move string)     local gesture classify (→ Move string)
-        \                                          /
-         \---------------- Socket.IO --------------/
-                             |
-                     Node Game Server (Express + Socket.IO)
-                     in-memory GameRoom state machine (AUTHORITATIVE)
-                      /        |          |          \
-                 Gemini    ElevenLabs   MongoDB     Solana
-              (narrate +     (TTS)    (leaderboard) (coin ledger)
-               balance)
-```
+Symptom: on slower machines, SPELL started with ~10s of frozen timer
+(25s → jump to 15s), black video, no detection. Fast laptops unaffected.
+Three stacked root causes, all fixed:
 
-**The one rule that matters:** the **server owns all game state**. Clients only
-send *intents* — "I'm ready", "I bought these powerups", "my move is rock". The
-server validates everything and pushes the full `MatchState` back. Never add
-game logic (scoring, win detection, coin math) to the client — both laptops must
-render from the same server truth.
+1. **GPU shader compilation is lazy** — MediaPipe's GPU delegate and tfjs
+   compile on FIRST INFERENCE, not at model load. → `AslDetector.warmup()`
+   runs at page load.
+2. **MediaPipe's landmark stage compiles only when a hand is FOUND.** Warming
+   on an empty camera frame only compiled the palm detector; the stall hit
+   when the player first raised a hand in-round. → warmup runs against a
+   bundled hand photo (`client/public/asl-model/warmup-hand.jpg`) drawn to a
+   canvas (verified it triggers detection).
+3. **`useWaveDelete` created a SECOND HandLandmarker at SPELL mount** — WASM
+   + model download + shader compile at round start every round, plus a
+   duplicate per-frame detection pass. → rewritten to consume the shared
+   detector's `frame` events (landmarks are exposed on `FrameDebug`).
 
-### Monorepo layout (npm workspaces)
+**If a stall reappears:** DevTools → Network at round start (any `.task` /
+`.wasm` download when SPELL begins = something re-initializing), plus the
+in-game badge diagnostics (§7).
 
-```
-shared/   TypeScript types + RPS rules — the client/server contract. No build step.
-server/   Express + Socket.IO + the GameRoom state machine + service wrappers.
-client/   React + Vite + zustand — camera, hand-tracking, and all UI.
-```
+## 6. Bugs fixed this session (regression map)
 
-`shared/` is imported as `@app/shared` from both sides, so a change to the socket
-protocol or a type is enforced across the whole app by the compiler.
+- **Server crash (critical):** submit after opponent left → `undefined !==
+  null` counted a vacated slot as "submitted" → resolve() on null player →
+  unhandled rejection → process death. Guards in `GameRoom.submitWord` /
+  `resolve`. Tests: `server/src/game/midMatchSafety.test.ts`.
+- **Mid-match leave now forfeits** to the remaining player (was: stranding
+  them in a dead phase, since removePlayer cancels all timers).
+- **Empty-word submissions:** countdown-expiry + Enter handlers captured a
+  stale `doSubmit` (word=""). All submit paths go through `wordRef` /
+  `doSubmitRef` (SpellArena.tsx). Auto-submit fires at 1s remaining (not 0)
+  to beat the server deadline over a real network.
+- **SUBMIT/BACKSPACE gestures** (model labels from 👍/👎) were appended as
+  literal text; now they trigger submit/delete (SUBMIT ignored on empty
+  word); multi-char labels can never enter the word.
+- **Login required refresh:** server reads the auth cookie from the socket
+  HANDSHAKE; authStore now reconnects the socket after login/register/logout.
+- **Stale browser bundle (cost ~a day of ghost-debugging):** HTML now served
+  with `Cache-Control: no-store` (server/src/index.ts). After `npm run
+  build`, a plain refresh always gets the new bundle.
+- **StabilityFilter fragility:** one low-confidence frame wiped the hold and
+  restarted holdMs → letters never committed on low-FPS machines. Dips <
+  `graceMs` (250ms) now keep the hold alive (asl/src/stability.ts).
+- **Overlay canvas race:** was sized once from `video.videoWidth` (0 until
+  metadata → 0×0 forever on slow machines); now synced per-frame.
+- **Lobby ← Leave button** added (no way to back out of a room before).
 
----
+## 7. Detector tuning + diagnostics
 
-## 3. The game loop (server-driven state machine)
+- Commit threshold **0.75 confidence / 500ms hold** (was 0.85/600) — in
+  `client/src/state/mediaStore.ts`; mirrored in `asl/demo/demo.ts`. The
+  overlay's green/amber cutoff in SpellArena.tsx must match.
+- In-game badge shows live `prediction confidence%` per frame (imperative DOM
+  via `liveRef`, deliberately not React state). "no hand" = detection issue;
+  letter stuck under 75% = model doesn't know this hand (→ collect + retrain).
+- Skeleton overlay: green ≥ commit bar, amber below.
 
-One `GameRoom` instance per match cycles through these phases. The client renders
-a different view per phase (see `client/src/App.tsx`).
+## 8. ASL model
 
-1. **LOBBY** — create/join by room code, both players ready up.
-2. **SHOP** — each player gets **10 tokens** to buy powerups. Server validates
-   the purchase (cost, budget). 20s timer, or skips when both lock in early.
-3. **ROUND_INTRO** — server may ask Gemini for a whitelisted *balance twist*;
-   narrates the round intro.
-4. **CAPTURE** — 3-2-1-Go countdown; each client commits **one move** (camera or
-   keyboard). Resolves early if both commit; missed deadline → auto-forfeit.
-5. **RESOLVE** — deterministic winner via `RoundResolver`. Coins: **winner +20,
-   loser −20**. Gemini narrates the result, ElevenLabs voices it.
-6. **Repeat** — **best of 5** (first to 3 round wins). Tunable: `BEST_OF` in
-   `server/src/game/GameRoom.ts`.
-7. **MATCH_END** — winner captures a photo → AI turns it into a themed portrait →
-   becomes their leaderboard avatar; coins settle on the ledger.
+- 28 classes: A–Z + SUBMIT (👍) + BACKSPACE (👎). J/Z are static
+  approximations. 63-dim input (21 landmarks × xyz, normalized). MLP 64→32→28.
+- Data: `asl/data/dataset_merged.json` (~57.5k samples; Kaggle import +
+  webcam collect sessions). Current val acc 99.7% — **inflated**: random
+  split, does NOT measure cross-person generalization (the real weakness).
+- Artifacts in `asl/model/` AND copied to `client/public/asl-model/` (what
+  the game loads). **Keep both in sync after retraining, then rebuild.**
+- `train_node.mjs` uses `@tensorflow/tfjs-node` if present (installed
+  --no-save; reinstall after a node_modules wipe) — ~20× faster. Batch 256.
+- Merge workflow: collect tool downloads `landmarks.json` → concat onto
+  dataset_merged.json (replace a label only when intended — O was fully
+  replaced once) → retrain → copy artifacts → `npm run build`.
+- `asl/data/*.bak*` = session merge backups, untracked, deletable.
 
-Key files:
-- `server/src/game/GameRoom.ts` — the state machine (start here to understand flow)
-- `server/src/game/RoundResolver.ts` — pure win/coin logic (fully unit-tested)
-- `server/src/sockets/handlers.ts` — maps socket events ↔ GameRoom methods
-- `client/src/App.tsx` — phase → view routing
-- `client/src/hooks/useSocket.ts` — all client↔server events in one place
+## 9. Solana (devnet) — ON
 
----
+- `server/.env`: `USE_REAL_SOLANA=true` + `SOLANA_KEYPAIR_PATH{,2,3}`.
+  **The feature flag requires PATH3 (house/escrow wallet)** — without it the
+  server silently uses MockLedger (this bit us; startup log tells the truth:
+  look for `[ledger:devnet] house/escrow wallet …`).
+- Wallets (`server/wallet-*-keypair.json`, gitignored):
+  - w1 `7xd7JHgyHzZh7GbbcjFm256TYXG85C2VQx9w46TewhMy` (~1.7 SOL)
+  - w2 `BMXu7hJYVMaPu7BLgMda3q5U32UfFAbnNqY79Ctwdk2P` (~1.0 SOL)
+  - w3 house `62g9gF5fAV6AheDWrjbz5TW4BLpsAdZeVcbyL5z9Kppe` (~1.5 SOL)
+- **Payouts go to the winner's ACCOUNT walletAddress** (set in the in-game
+  account bar). Demo plan: felpau's account → w1 address, marc's → w2.
+- Devnet faucet is rate-limited; fund by transferring between our own wallets
+  (@solana/web3.js from the server workspace) instead of airdrops.
+- Escrow: bets pulled into house at match start only for accounts listed in
+  `SOLANA_DEMO_KEYPAIRS` (else skipped); house pays winner 2× bet at match
+  end. Chain failures log and never break the match.
 
-## 4. What's real vs. stubbed
+## 10. Known issues / next work (unfixed)
 
-**Everything runs on mocks by default.** Turn a service "real" by setting its env
-vars in `server/.env` (copy from `server/.env.example`). No code change needed to
-flip a service on — the wrapper detects the key and switches.
+1. **Gemini credits DEPLETED** (429). Judging falls back to a stub that only
+   checks length ≥ 2 — it declared "LVEEL" a winner. Top up at ai.studio
+   before the demo or word validity is fake. (Test-suite 429 noise = this.)
+2. **Cross-person model accuracy:** felpau gets far fewer commits than marc.
+   Real fix: ~100–150 samples/letter from EACH player → merge → retrain.
+3. **No mid-match socket reconnect:** a dropped socket (ngrok hiccup) orphans
+   the player permanently (new socket has no meta, not in the room, no
+   broadcasts). Needs rejoin-by-accountId. Biggest remaining tunnel risk.
+4. **Room leak:** both tabs closed without LEAVE_MATCH → room lives forever
+   (disconnect only sets connected=false).
+5. **Same account can occupy both slots** of one room (no dup check).
+6. **AUTH_JWT_SECRET unset** — insecure dev default (boot warning).
+7. Client bundle 1.9MB (Vite chunk warning) — ignorable for the demo.
 
-| Service | Default (no key) | Make it real | Wrapper to edit |
-|---|---|---|---|
-| **Gemini** narration | canned lines | set `GEMINI_API_KEY` | `server/src/services/gemini/geminiClient.ts` |
-| **Gemini** twists | disabled (no twists) | set `GEMINI_API_KEY` | same file, `proposeBalanceTwist()` |
-| **ElevenLabs** voice | text only, silent | `ELEVENLABS_API_KEY` + `ELEVENLABS_VOICE_ID` | `server/src/services/elevenlabs/ttsClient.ts` |
-| **Image-gen** portraits | photo passthrough | `STUB_IMAGE_GEN=false` (+ Gemini key) | `server/src/services/imagegen/imageGenClient.ts` |
-| **MongoDB** leaderboard | in-memory Map | `MONGODB_URI` | `server/src/services/mongo/*` |
-| **Solana** ledger | in-memory MockLedger | `USE_REAL_SOLANA=true` (+ RPC + secret key) | `server/src/services/solana/ledger.ts` |
+## 11. Gotchas that will waste your time
 
-The env schema/loader is `server/src/config/env.ts` — it also exposes a `features`
-object (`features.gemini`, `features.solana`, …) so wrappers know which mode
-they're in.
+- **`npm run build` is what players see.** The server serves `client/dist`;
+  client edits do nothing for players until rebuilt. Server code = restart
+  only (tsx runs src directly; `npm -w server run build` is just a typecheck,
+  there is no dist).
+- The outer dir `~/projects/CU Hackathon 2026/` is NOT the git repo — the
+  repo is the `CU-Hackathon-2026/` subdirectory
+  (github.com/felpau05/CU-Hackathon-2026, branch main; commit+push directly
+  to main is the approved workflow here).
+- Paths contain spaces — quote everything. tsx/esbuild choked on scripts
+  outside the workspace; run scratch scripts from inside `server/`.
+- `asl/venv/`, `__pycache__`, `*Zone.Identifier`, big datasets, wallet
+  keypairs, `archive/` are gitignored ON PURPOSE. Don't force-add.
+- MediaPipe WASM + hand model load from CDNs at runtime (jsdelivr + Google
+  storage) — demo needs internet regardless of ngrok.
+- ngrok free: URL changes each restart (re-share); players click through a
+  "Visit Site" interstitial on first load.
+- User (felpau; "paul" in-game) wants direct action: fix → push → exact
+  commands to run. When a symptom recurs, always pair the fix with an
+  observable verification step ("check X in DevTools", "look for log Y").
 
----
+## 12. State at handoff
 
-## 5. Suggested task split (parallelizable)
-
-Each area is isolated behind an interface, so devs can work in parallel without
-stepping on each other. Recommended priority order (highest demo impact first):
-
-**① Hand tracking (riskiest — own it early)** — `client/src/hooks/useHandTracking.ts`
-+ `client/src/lib/gestureClassifier.ts`. MediaPipe is wired and classifies
-rock/paper/scissors by finger geometry. Tune thresholds against real cameras.
-⚠️ The model loads from a CDN — vendor it into `client/public` for offline demo
-reliability (TODO marked in the file). The keyboard `1/2/3` fallback already
-works and emits the same event, so play never blocks on tracking.
-
-**② Gemini gamemaster** — `server/src/services/gemini/geminiClient.ts`. Tune the
-narration prompt (keep it to one hype sentence) and the twist-selection prompt.
-Twists **must** return a value from the `TwistId` enum — never free-form rules.
-
-**③ ElevenLabs voice** — `server/src/services/elevenlabs/ttsClient.ts`. TTS via
-REST is wired; just add the key + voice id. Conversational banter ("understands
-players") is a stubbed stretch goal (`understandAndReply()`).
-
-**④ Leaderboard / MongoDB** — `server/src/services/mongo/leaderboard.ts`. Works
-in-memory now; point `MONGODB_URI` at Atlas and it persists. Schema is
-`models/Player.ts`.
-
-**⑤ Winner portrait** — `server/src/services/imagegen/imageGenClient.ts`. Flip
-`STUB_IMAGE_GEN=false` to call the Gemini image model. Tune `DEFAULT_STYLE_PROMPT`
-to match the game's visual theme.
-
-**⑥ Solana ledger (do last / final hours)** — `server/src/services/solana/ledger.ts`.
-Implement `DevnetLedger` against the existing `CoinLedger` interface (Mock already
-satisfies it). Devnet airdrop/wallet setup is a classic time sink — the mock
-already gives the "coins go up" demo, so gate this behind spare time.
-
-**UI polish** — `client/src/components/*` + `client/src/styles.css`. All phase
-views exist and are functional but plain; restyle freely.
-
----
-
-## 6. Two-laptop / camera gotcha (READ THIS before the live demo)
-
-`getUserMedia` (webcam) only works on **`localhost` or HTTPS**. Two laptops
-hitting `http://<lan-ip>:3001` will have the camera **silently blocked** in
-Chrome — no error, just no video.
-
-**Fix (single origin for both laptops):**
-```bash
-npm run build                 # builds the client into client/dist
-npm run start                 # server serves the client AND the API on :3001
-npx ngrok http 3001           # → one https URL
-```
-Both laptops open that **one HTTPS URL**. This solves camera permissions and
-cross-machine discovery in one step. (Or deploy the server to Render/Fly.io.)
-
-If the camera still won't cooperate on stage, the **keyboard `1/2/3`** and the
-on-screen Rock/Paper/Scissors buttons work identically — the game is fully
-playable without a camera.
-
----
-
-## 7. Conventions & gotchas
-
-- **Server is authoritative** — see §2. No game logic in the client.
-- **Add a socket event?** Define its name in `SocketEvents` and its payload type
-  in `shared/src/types.ts` *first*, then wire server (`sockets/handlers.ts`) and
-  client (`hooks/useSocket.ts`). The compiler keeps both ends honest.
-- **Powerups** are defined twice on purpose: authoritative catalog in
-  `server/src/game/powerupCatalog.ts` (drives validation + effects), mirrored for
-  display in `client/src/components/PowerupShop.tsx`. Keep them in sync; the
-  server rejects anything invalid regardless.
-- **Powerup effects** live only in `RoundResolver.ts`. Adding a powerup =
-  add to the catalog + add its effect branch in the resolver + a unit test.
-- **Server runs via `tsx`** (TypeScript directly) in both dev and prod, so
-  `shared/` needs no build step. Don't `node dist/index.js` — use `npm run start`.
-- **Match length / timers** are constants at the top of `GameRoom.ts`
-  (`BEST_OF`, `SHOP_DURATION_MS`, `CAPTURE_DURATION_MS`, `STARTING_COINS`).
-- **Secrets:** never commit `server/.env`. It's gitignored; share keys out of band.
-
----
-
-## 8. Verify your changes
-
-- `npm test` — resolver + rules stay green (add a test when you add a rule).
-- `npm run typecheck` — must pass across all workspaces before pushing.
-- Manual smoke: `npm run dev`, open two tabs, play a full match. Shop should
-  reject over-budget buys; each round should apply ±20 (or ±40 on `DOUBLE_STAKES`);
-  match should end at 3 round wins; winner flow should produce a leaderboard entry.
-
-Questions on the architecture? Start with `GameRoom.ts` and `shared/src/types.ts` —
-between them they describe the entire game.
+- main @ `83f9cfc`, everything pushed. Typecheck clean ×4 workspaces; server
+  tests all pass (16 incl. subtests).
+- Working tree: only untracked junk (dataset .bak files).
+- ngrok URL this session: `https://unpainted-unexclusive-loren.ngrok-free.dev`
+  (dies with the tunnel).
+- **Last change NOT yet verified by the user:** the round-start stall
+  elimination (`83f9cfc`, §5). User was about to rebuild + retest. If the
+  freeze persists, start with the Network-tab check in §5 and the badge
+  diagnostics in §7.
