@@ -76,6 +76,17 @@ export function registerSocketHandlers(io: Server): void {
       metaRoom(meta)?.submitWord(meta!.slot, payload.word ?? '');
     });
 
+    // Leave the current room (post-game "back to lobby") without disconnecting
+    // the socket, so the player can immediately create/join a fresh match.
+    socket.on(SocketEvents.LEAVE_MATCH, () => {
+      if (!meta) return;
+      const room = getRoom(meta.roomCode);
+      room?.removePlayer(meta.slot);
+      socket.leave(meta.roomCode);
+      if (room?.isEmpty) removeRoom(meta.roomCode);
+      meta = null;
+    });
+
     socket.on('disconnect', () => {
       if (!meta) return;
       const room = getRoom(meta.roomCode);

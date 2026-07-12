@@ -120,6 +120,14 @@ export class GameRoom {
     }
   }
 
+  /** Fully vacate a slot when a player leaves (e.g. post-game "back to lobby").
+   *  Cancels any pending phase timer so an abandoned room can't fire callbacks. */
+  removePlayer(slot: PlayerSlot): void {
+    this.clearTimer();
+    this.players[slot] = null;
+    this.broadcast();
+  }
+
   get isEmpty(): boolean {
     return !this.players.p1 && !this.players.p2;
   }

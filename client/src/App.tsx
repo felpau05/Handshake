@@ -3,7 +3,7 @@
 // both laptops render the same thing.
 import { useCallback, useState } from 'react';
 import type { CaptureWinnerPhotoPayload } from '@app/shared';
-import { useSocket } from './hooks/useSocket.js';
+import { useSocket, leaveMatch } from './hooks/useSocket.js';
 import { useGameStore } from './state/gameStore.js';
 import { Lobby } from './components/Lobby.js';
 import { StakeSetup } from './components/StakeSetup.js';
@@ -79,6 +79,17 @@ export default function App() {
             />
             <Leaderboard refresh={leaderboardRefresh} />
           </div>
+          {/* Post-game lingers as long as they want; this is the way back. */}
+          <button
+            className="primary"
+            style={{ marginTop: '1rem' }}
+            onClick={() => {
+              setAmWinner(false);
+              leaveMatch();
+            }}
+          >
+            ← Back to lobby
+          </button>
         </>
       )}
     </div>

@@ -3,26 +3,28 @@
 import { useState } from 'react';
 import { createMatch, joinMatch, setReady } from '../hooks/useSocket.js';
 import { useGameStore } from '../state/gameStore.js';
+import { useAuthStore } from '../state/authStore.js';
 
 export function Lobby() {
-  const [name, setName] = useState('');
   const [code, setCode] = useState('');
   const match = useGameStore((s) => s.match);
   const roomCode = useGameStore((s) => s.roomCode);
   const me = useGameStore((s) => s.me());
   const opponent = useGameStore((s) => s.opponent());
   const error = useGameStore((s) => s.error);
+  // You're signed in, so the match uses your account's username automatically.
+  const username = useAuthStore((s) => s.user?.displayName ?? 'Player');
 
   // Pre-join: choose create or join.
   if (!roomCode) {
     return (
       <div className="panel">
-        <h3>Join a match</h3>
-        <div className="row">
-          <input placeholder="Your name" value={name} onChange={(e) => setName(e.target.value)} />
-        </div>
+        <h3>Play a match</h3>
+        <p className="muted">
+          Playing as <strong>{username}</strong>
+        </p>
         <div className="row" style={{ marginTop: '0.75rem' }}>
-          <button className="primary" disabled={!name} onClick={() => createMatch(name)}>
+          <button className="primary" onClick={() => createMatch(username)}>
             Create match
           </button>
           <span className="muted">or</span>
@@ -32,7 +34,7 @@ export function Lobby() {
             maxLength={4}
             onChange={(e) => setCode(e.target.value.toUpperCase())}
           />
-          <button disabled={!name || code.length < 4} onClick={() => joinMatch(code, name)}>
+          <button disabled={code.length < 4} onClick={() => joinMatch(code, username)}>
             Join
           </button>
         </div>

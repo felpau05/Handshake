@@ -79,3 +79,9 @@ export function submitWord(word: string): void {
 export function sendSpellProgress(length: number): void {
   socket.emit(SocketEvents.SPELL_PROGRESS, { length });
 }
+
+/** Leave the current room and reset local match state → back to the lobby. */
+export function leaveMatch(): void {
+  socket.emit(SocketEvents.LEAVE_MATCH);
+  useGameStore.getState().reset();
+}
