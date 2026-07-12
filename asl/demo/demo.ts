@@ -1,10 +1,14 @@
 // Demo consumer of the drop-in detector. Shows the intended integration shape:
 // create → init → attach a <video> → subscribe → start. Word-building is done
 // HERE (the consumer's job), not inside the module.
+import { HandLandmarker, DrawingUtils } from '@mediapipe/tasks-vision';
 import { createAslDetector } from '../src/index.js';
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 const video = $<HTMLVideoElement>('video');
+const overlay = $<HTMLCanvasElement>('overlay');
+const overlayCtx = overlay.getContext('2d')!;
+const drawer = new DrawingUtils(overlayCtx);
 const statusEl = $('status');
 const wordEl = $('word');
 const lastEl = $('last');
@@ -24,6 +28,8 @@ async function main(): Promise<void> {
   });
   video.srcObject = stream;
   await video.play();
+  overlay.width = video.videoWidth;
+  overlay.height = video.videoHeight;
 
   // Reused canvas for grabbing a snapshot on each committed letter. Cheap: it
   // only fires on commit (not per frame), so there's no measurable slowdown.
@@ -89,6 +95,13 @@ async function main(): Promise<void> {
   const hudRate = document.getElementById('hud-rate')!;
   const window100: boolean[] = [];
   detector.on('frame', (f) => {
+    overlayCtx.clearRect(0, 0, overlay.width, overlay.height);
+    if (f.landmarks) {
+      const color = f.confidence >= 0.85 ? '#9ae6b4' : '#f6ad55';
+      const pts = f.landmarks.map((l) => ({ ...l, visibility: 0 }));
+      drawer.drawConnectors(pts, HandLandmarker.HAND_CONNECTIONS, { color, lineWidth: 3 });
+      drawer.drawLandmarks(pts, { color: '#fff', fillColor: color, radius: 3 });
+    }
     hudHand.textContent = f.handDetected ? 'YES' : 'no';
     (hudHand as HTMLElement).style.color = f.handDetected ? '#9ae6b4' : '#fc8181';
     hudPred.textContent = f.letter ?? '—';

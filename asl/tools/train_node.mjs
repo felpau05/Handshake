@@ -1,12 +1,18 @@
 // Headless trainer — a CLI twin of tools/train.ts for when you'd rather not open
 // the browser. Same architecture, hyperparameters, and tfjs version as train.ts,
 // so the model it emits is byte-compatible with the browser flow and with
-// src/classifier.ts (tf.loadLayersModel). Uses the pure-JS CPU backend, so it
-// needs no native deps beyond the @tensorflow/tfjs already in this workspace.
+// src/classifier.ts (tf.loadLayersModel). Uses the native tfjs-node backend
+// when installed (`npm i @tensorflow/tfjs-node`) — much faster than the pure-JS
+// CPU backend at 50k+ samples — and falls back to pure-JS if it's not present.
 //
 // Usage (run from the asl/ dir):
 //   node tools/train_node.mjs data/dataset_merged.json [more.json ...]
 // Writes model.json + model.weights.bin + labels.json into model/.
+try {
+  await import('@tensorflow/tfjs-node');
+} catch {
+  console.log('(@tensorflow/tfjs-node not installed — using slower pure-JS backend)');
+}
 import * as tf from '@tensorflow/tfjs';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -63,7 +69,7 @@ model.compile({ optimizer: tf.train.adam(0.001), loss: 'categoricalCrossentropy'
 
 await model.fit(xTrain, yTrain, {
   epochs: 60,
-  batchSize: 32,
+  batchSize: 256,
   validationData: [xVal, yVal],
   callbacks: {
     onEpochEnd: (epoch, logs) => {

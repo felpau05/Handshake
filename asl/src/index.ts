@@ -6,7 +6,7 @@ import { HandLandmarkExtractor } from './landmarks.js';
 import { LetterClassifier } from './classifier.js';
 import { StabilityFilter } from './stability.js';
 import { normalizeLandmarks } from './normalize.js';
-import type { AslDetectorOptions, LetterEvent } from './types.js';
+import type { AslDetectorOptions, LetterEvent, Landmark } from './types.js';
 
 export type { AslDetectorOptions, LetterEvent, Landmark, Handedness } from './types.js';
 export { normalizeLandmarks, VECTOR_SIZE } from './normalize.js';
@@ -21,6 +21,8 @@ export interface FrameDebug {
   letter: string | null;
   /** Raw softmax confidence of that top letter, 0..1. */
   confidence: number;
+  /** 21 raw MediaPipe keypoints (image-normalized 0..1), or null if no hand. For drawing an overlay. */
+  landmarks: Landmark[] | null;
 }
 
 export interface AslDetector {
@@ -82,7 +84,7 @@ export function createAslDetector(options: AslDetectorOptions = {}): AslDetector
       }
       if (frameListeners.size) {
         frameListeners.forEach((cb) =>
-          cb({ handDetected: !!reading, letter, confidence }),
+          cb({ handDetected: !!reading, letter, confidence, landmarks: reading?.landmarks ?? null }),
         );
       }
       const committed = stability.update(letter, confidence, now);

@@ -6,6 +6,7 @@
 // app load (see mediaStore/useMediaWarmup) — this component only attaches to
 // what's already ready, so re-mounting between rounds costs nothing.
 import { useEffect, useRef, useState } from 'react';
+import { HandLandmarker, DrawingUtils } from '@mediapipe/tasks-vision';
 import type { LetterEvent } from '@app/asl';
 import { useMediaStore } from '../state/mediaStore.js';
 import { useWaveDelete } from '../hooks/useWaveDelete.js';
@@ -23,6 +24,8 @@ export function SpellArena() {
   const [word, setWord] = useState('');
   const [tracking, setTracking] = useState(false);
   const [submitted, setSubmitted] = useState(false);
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const drawerRef = useRef<DrawingUtils | null>(null);
 
   const prompt = useGameStore((s) => s.match?.prompt ?? '');
   const deadline = useGameStore((s) => s.match?.phaseDeadline ?? null);
@@ -44,14 +47,36 @@ export function SpellArena() {
   // on cleanup pauses it (NOT destroy — the model stays loaded for next time).
   useEffect(() => {
     if (!detector || !detectorReady || cameraStatus !== 'ready' || !videoRef.current) return;
-    detector.attachVideo(videoRef.current);
+    const video = videoRef.current;
+    detector.attachVideo(video);
     detector.reset();
+
     const onLetter = (e: LetterEvent) => setWord((w) => (w.length < 20 ? w + e.letter : w));
-    const unsubscribe = detector.on('letter', onLetter);
+    const unsubLetter = detector.on('letter', onLetter);
+
+    let unsubFrame: (() => void) | null = null;
+    const canvas = canvasRef.current;
+    if (canvas) {
+      canvas.width = video.videoWidth;
+      canvas.height = video.videoHeight;
+      const ctx = canvas.getContext('2d')!;
+      drawerRef.current = new DrawingUtils(ctx);
+      unsubFrame = detector.on('frame', (f) => {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        if (f.landmarks) {
+          const color = f.confidence >= 0.85 ? '#22c55e' : '#f59e0b';
+          const pts = f.landmarks.map((l) => ({ ...l, visibility: 0 }));
+          drawerRef.current!.drawConnectors(pts, HandLandmarker.HAND_CONNECTIONS, { color, lineWidth: 3 });
+          drawerRef.current!.drawLandmarks(pts, { color: '#fff', fillColor: color, radius: 3 });
+        }
+      });
+    }
+
     detector.start();
     setTracking(true);
     return () => {
-      unsubscribe();
+      unsubLetter();
+      unsubFrame?.();
       detector.stop();
       setTracking(false);
     };
@@ -100,6 +125,7 @@ export function SpellArena() {
 
       <div className="camera-wrap">
         <video ref={videoRef} playsInline muted />
+        <canvas ref={canvasRef} />
         <div className="move-badge">
           {tracking ? 'tracking ✓' : cameraStatus === 'ready' ? 'loading…' : cameraStatus}
         </div>

@@ -7,7 +7,10 @@
     <style>
       :root { color-scheme: dark; }
       body { margin: 0; font-family: system-ui, sans-serif; background: #111; color: #eee; padding: 24px; display: grid; grid-template-columns: 640px 1fr; gap: 24px; }
-      video { width: 640px; border-radius: 8px; background: #000; transform: scaleX(-1); }
+      .video-wrap { position: relative; width: 640px; }
+      video, #overlay { width: 640px; border-radius: 8px; transform: scaleX(-1); }
+      video { background: #000; }
+      #overlay { position: absolute; top: 0; left: 0; pointer-events: none; }
       h1 { font-size: 20px; margin: 0 0 8px; }
       #word { font-size: 56px; font-weight: 700; letter-spacing: 6px; min-height: 70px; word-break: break-all; }
       #last { font-size: 15px; color: #9ae6b4; min-height: 22px; }
@@ -18,7 +21,10 @@
   </head>
   <body>
     <div>
-      <video id="video" playsinline muted></video>
+      <div class="video-wrap">
+        <video id="video" playsinline muted></video>
+        <canvas id="overlay"></canvas>
+      </div>
       <div id="status">Loading…</div>
     </div>
     <div>
