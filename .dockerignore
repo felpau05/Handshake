@@ -1,0 +1,29 @@
+# Secrets NEVER enter the image — they're mounted read-only at runtime
+# (see docker-compose.yml). The image must stay safe to push to any registry.
+secrets/
+**/.env
+wallet-*.json
+
+# Installed/built inside the image, not copied in
+node_modules
+**/node_modules
+client/dist
+
+# Training data + artifacts the running app never touches (the client loads
+# its model from client/public/asl-model, which IS included)
+asl/data/
+asl/model/
+asl/training-runs/
+asl/venv/
+**/__pycache__
+
+# Repo noise
+.git
+.gitignore
+*.log
+*.bak*
+docs/
+HANDOFF.md
+DEVPOST.md
+README.md
+.claude/

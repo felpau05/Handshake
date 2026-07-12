@@ -61,3 +61,20 @@ vars (`server/.env`):
 - `npm run build` — build shared → client → server for production
 - `npm run typecheck` — typecheck every workspace
 - `npm test` — run server unit tests (rules + resolver)
+
+## Docker
+
+The whole stack runs containerized — nginx (reverse proxy) → app → redis —
+with zero changes to the native workflow above:
+
+```bash
+docker compose up --build   # play at http://localhost:8080
+npx ngrok http 8080         # share it, same as before
+```
+
+Secrets (`secrets/`, `.env`) are never baked into the image — the compose
+file mounts them read-only at runtime and overrides the file-path env vars
+with in-container paths. Game rooms are deliberately pinned to ONE app
+instance (authoritative in-process state machine with live timers); the
+scale path is the Socket.IO Redis adapter + sticky sessions, for which the
+redis service and `REDIS_URL` are already provisioned.
