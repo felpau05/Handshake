@@ -1,20 +1,39 @@
 // Gemini = the gamemaster brain for ASL Word Battle. Jobs:
-//   1. announcePrompt()  → an energetic reveal line for a prompt word
-//   2. validateWord()    → is the word real AND related to the prompt?
-//   3. narrate()         → live commentary on the resolved round
-//   4. suggestMove()     → a hint of a good word to sign ("says what move to use")
+//   1. announcePrompt() → an energetic reveal line for a prompt word
+//   2. judgeRound()     → ONE call that validates + scores BOTH words, decides
+//                         the round winner, and writes the narration together
+//                         (replaces the old separate validateWord()/narrate()
+//                         pair, which cost 3 Gemini calls per round for 1).
+//   3. suggestMove()    → a hint of a good word to sign ("says what move to use")
 // All degrade gracefully: with no GEMINI_API_KEY they return canned/stub results
 // so the game is fully playable offline. Fill in prompt tuning where marked TODO.
 import { GoogleGenAI } from '@google/genai';
+import type { PlayerSlot } from '@app/shared';
 import { env, features } from '../../config/env.js';
-import type { RoundNarrationContext } from '../../game/GameRoom.js';
 
 const ai = features.gemini ? new GoogleGenAI({ apiKey: env.GEMINI_API_KEY! }) : null;
 
-export interface WordVerdict {
+/** Gemini's judgment of a single player's word. */
+export interface WordJudgment {
+  word: string;
+  /** A real word AND related to the prompt. Invalid words can't win the round. */
   valid: boolean;
-  relates: boolean;
-  reason?: string;
+  /** 0–10: how sophisticated/impressive the word is. 0 when invalid. */
+  complexity: number;
+  /** 0–10: how well the word relates to the prompt. 0 when invalid. */
+  relatedness: number;
+  /** One short punchy line judging this specific word. */
+  verdict: string;
+}
+
+/** The full judged outcome of a round — one Gemini call produces all of this. */
+export interface RoundJudgment {
+  player1: WordJudgment;
+  player2: WordJudgment;
+  /** null means a genuine tie/toss-up → GameRoom triggers sudden death. */
+  roundWinner: PlayerSlot | null;
+  /** One hype sentence announcing the round outcome, naming both words. */
+  narration: string;
 }
 
 /** Reveal line for a fresh prompt word (voiced by ElevenLabs). */
@@ -33,55 +52,49 @@ export async function announcePrompt(prompt: string, suddenDeath: boolean): Prom
 }
 
 /**
- * Validate a submitted word: must be a REAL word AND relate to the prompt. The
- * longest VALID word wins the round, so this is the gate. Offline stub accepts
- * any word of 2+ letters so the game still runs on mocks.
+ * ONE call that judges an entire round: validates both words against the
+ * prompt, scores each on complexity + relatedness, decides the winner
+ * (invalid/unrelated loses regardless of raw length), and writes the
+ * narration — all in the same response, so a round costs one Gemini call
+ * instead of three. Never throws: any failure (no key, bad JSON, network)
+ * degrades to a deterministic offline stub so the match always resolves.
  */
-export async function validateWord(word: string, prompt: string): Promise<WordVerdict> {
-  const clean = word.trim().toLowerCase();
-  // Offline stub verdict — also the fallback when a real Gemini call FAILS, so a
-  // blocked/misconfigured key degrades to playable offline behavior instead of
-  // marking every word invalid.
-  const stub: WordVerdict = {
-    valid: clean.length >= 2,
-    relates: clean.length >= 2,
-    reason: clean.length >= 2 ? 'stub-accept' : 'too short',
-  };
+export async function judgeRound(
+  prompt: string,
+  words: Record<PlayerSlot, string>,
+): Promise<RoundJudgment> {
+  const stub = stubJudgment(prompt, words);
   if (!ai) return stub;
 
   try {
-    // TODO(team): consider a dictionary check before spending a Gemini call.
     const res = await ai.models.generateContent({
       model: env.GEMINI_MODEL,
       contents:
-        `Is "${clean}" a real English word that relates to the theme "${prompt}"? ` +
-        `Answer strictly as JSON: {"real": boolean, "relates": boolean}. No prose.`,
+        `You are the judge and hype host for an ASL fingerspelling word battle. ` +
+        `The theme is "${prompt}". ` +
+        `Player 1 signed "${words.p1 || '(nothing)'}". ` +
+        `Player 2 signed "${words.p2 || '(nothing)'}". ` +
+        `For each player, judge: valid (a real English word), complexity ` +
+        `(0-10, how sophisticated/impressive the word is), relatedness (0-10, ` +
+        `how well it relates to the theme; 0 if invalid), and a short punchy ` +
+        `verdict line on that word. Then decide roundWinner ("p1" or "p2") by ` +
+        `weighing validity, relatedness, and complexity together — an invalid ` +
+        `or unrelated word must lose to a valid related one regardless of raw ` +
+        `length. If it's a genuine toss-up, roundWinner is null. Finally write ` +
+        `ONE short hype sentence of narration naming both words and the winner. ` +
+        `Respond with ONLY strict JSON, no prose, no markdown fences, in exactly ` +
+        `this shape: {"player1":{"word":string,"valid":boolean,"complexity":number,` +
+        `"relatedness":number,"verdict":string},"player2":{...same shape...},` +
+        `"roundWinner":"p1"|"p2"|null,"narration":string}`,
     });
-    const parsed = parseVerdict(res.text ?? '');
-    return { valid: parsed.real && parsed.relates, relates: parsed.relates };
+    return parseRoundJudgment(res.text ?? '', words) ?? stub;
   } catch (err) {
     console.warn(
-      '[gemini] validateWord failed, falling back to offline stub:',
+      '[gemini] judgeRound failed, falling back to offline stub:',
       err instanceof Error ? err.message.split('\n')[0] : err,
     );
     return stub;
   }
-}
-
-/** Live commentary on a resolved round. */
-export async function narrate(ctx: RoundNarrationContext): Promise<string> {
-  if (!ai) return cannedNarration(ctx);
-  const p1 = ctx.players.p1?.displayName ?? 'Player 1';
-  const p2 = ctx.players.p2?.displayName ?? 'Player 2';
-  const res = await ai.models.generateContent({
-    model: env.GEMINI_MODEL,
-    contents:
-      `Prompt was "${ctx.prompt}". ${p1} signed "${ctx.words.p1 ?? '(nothing)'}", ` +
-      `${p2} signed "${ctx.words.p2 ?? '(nothing)'}". ` +
-      `${ctx.winner ? `${ctx.players[ctx.winner]?.displayName} won.` : "It's a tie."} ` +
-      `Give ONE short, hype sentence of commentary. No emojis.`,
-  });
-  return (res.text ?? cannedNarration(ctx)).trim();
 }
 
 /** Optional hint of a strong word to sign ("says what move to use"). */
@@ -105,21 +118,73 @@ function cannedPromptLine(prompt: string, suddenDeath: boolean): string {
     : `Your prompt is "${prompt}" — sign the biggest related word you can!`;
 }
 
-function cannedNarration(ctx: RoundNarrationContext): string {
-  if (!ctx.winner) return "Neck and neck — it's a tie! Sudden death!";
-  const name = ctx.players[ctx.winner]?.displayName ?? 'The champ';
-  return `${name} spells it out and takes the round!`;
+/**
+ * Deterministic offline judgment — used with no GEMINI_API_KEY, and as the
+ * fallback when a real call fails or returns unparseable JSON. Accepts any
+ * word of 2+ letters (mirroring the old validateWord stub) and picks the
+ * winner by length, same rule as shared/rules.ts's decideBattle.
+ */
+function stubJudgment(prompt: string, words: Record<PlayerSlot, string>): RoundJudgment {
+  const mk = (word: string): WordJudgment => {
+    const valid = word.length >= 2;
+    return {
+      word,
+      valid,
+      complexity: valid ? Math.min(10, word.length) : 0,
+      relatedness: valid ? 10 : 0,
+      verdict: valid ? 'Accepted (offline stub).' : 'Too short or empty.',
+    };
+  };
+  const player1 = mk(words.p1);
+  const player2 = mk(words.p2);
+  const roundWinner: PlayerSlot | null =
+    player1.valid !== player2.valid
+      ? player1.valid
+        ? 'p1'
+        : 'p2'
+      : player1.valid && player1.word.length !== player2.word.length
+        ? player1.word.length > player2.word.length
+          ? 'p1'
+          : 'p2'
+        : null;
+  const narration = roundWinner
+    ? `${roundWinner === 'p1' ? words.p1 : words.p2} takes it for "${prompt}"!`
+    : "It's a tie — sudden death!";
+  return { player1, player2, roundWinner, narration };
 }
 
-function parseVerdict(text: string): { real: boolean; relates: boolean } {
+/** Parses judgeRound's expected JSON shape; returns null on any mismatch so
+ *  the caller falls back to the offline stub instead of trusting garbage. */
+function parseRoundJudgment(text: string, words: Record<PlayerSlot, string>): RoundJudgment | null {
   try {
     const match = text.match(/\{[\s\S]*\}/);
-    if (match) {
-      const j = JSON.parse(match[0]);
-      return { real: Boolean(j.real), relates: Boolean(j.relates) };
-    }
+    if (!match) return null;
+    const j = JSON.parse(match[0]);
+    const toJudgment = (raw: unknown, fallbackWord: string): WordJudgment => {
+      const o = (raw ?? {}) as Record<string, unknown>;
+      const valid = Boolean(o.valid);
+      return {
+        word: typeof o.word === 'string' && o.word ? o.word : fallbackWord,
+        valid,
+        complexity: valid ? clamp0to10(o.complexity) : 0,
+        relatedness: valid ? clamp0to10(o.relatedness) : 0,
+        verdict: typeof o.verdict === 'string' ? o.verdict : '',
+      };
+    };
+    const roundWinner = j.roundWinner === 'p1' || j.roundWinner === 'p2' ? j.roundWinner : null;
+    return {
+      player1: toJudgment(j.player1, words.p1),
+      player2: toJudgment(j.player2, words.p2),
+      roundWinner,
+      narration: typeof j.narration === 'string' && j.narration ? j.narration : '',
+    };
   } catch {
-    /* fall through */
+    return null;
   }
-  return { real: false, relates: false };
+}
+
+function clamp0to10(value: unknown): number {
+  const n = typeof value === 'number' ? value : Number(value);
+  if (!Number.isFinite(n)) return 0;
+  return Math.max(0, Math.min(10, n));
 }

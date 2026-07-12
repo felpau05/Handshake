@@ -1,15 +1,11 @@
-// Resolves a spell round: validate each player's word against the prompt (Gemini,
-// or the offline stub), then decide the winner by effective word length. Pure
-// orchestration — the length comparison is the shared, unit-tested decideBattle;
-// this module just gathers validity and builds the per-player outcomes.
-import {
-  decideBattle,
-  effectiveLength,
-  normalizeWord,
-  type PlayerSlot,
-  type WordOutcome,
-} from '@app/shared';
-import { validateWord } from '../services/gemini/geminiClient.js';
+// Resolves a spell round with a single Gemini call: judgeRound() validates
+// both words against the prompt, scores complexity/relatedness, decides the
+// winner, and writes the narration together. This module just normalizes the
+// raw submitted words and reshapes Gemini's judgment into the broadcast
+// WordOutcome shape — no separate length-comparison step, since the winner
+// comes straight from the judgment.
+import { normalizeWord, type PlayerSlot, type WordOutcome } from '@app/shared';
+import { judgeRound, type WordJudgment } from '../services/gemini/geminiClient.js';
 
 export interface ResolveInput {
   prompt: string;
@@ -20,24 +16,34 @@ export interface ResolveOutput {
   winner: PlayerSlot | null;
   tie: boolean;
   outcomes: Record<PlayerSlot, WordOutcome>;
+  narration: string;
 }
 
-/** Validate both words (in parallel) and decide the round. */
+/** Judge both words together and reshape the result for GameRoom. */
 export async function resolveWordBattle(input: ResolveInput): Promise<ResolveOutput> {
   const { prompt, words } = input;
+  const normalized: Record<PlayerSlot, string> = {
+    p1: normalizeWord(words.p1 ?? ''),
+    p2: normalizeWord(words.p2 ?? ''),
+  };
 
-  const [p1, p2] = await Promise.all([
-    buildOutcome(prompt, words.p1),
-    buildOutcome(prompt, words.p2),
-  ]);
+  const judgment = await judgeRound(prompt, normalized);
 
-  const { winner, tie } = decideBattle(p1, p2);
-  return { winner, tie, outcomes: { p1, p2 } };
+  return {
+    winner: judgment.roundWinner,
+    tie: judgment.roundWinner === null,
+    outcomes: { p1: toOutcome(judgment.player1), p2: toOutcome(judgment.player2) },
+    narration: judgment.narration,
+  };
 }
 
-async function buildOutcome(prompt: string, raw: string | null): Promise<WordOutcome> {
-  const word = normalizeWord(raw ?? '');
-  if (!word) return { word: '', valid: false, length: 0 };
-  const { valid } = await validateWord(word, prompt).catch(() => ({ valid: false }));
-  return { word, valid, length: effectiveLength(word, valid) };
+function toOutcome(w: WordJudgment): WordOutcome {
+  return {
+    word: w.word,
+    valid: w.valid,
+    length: w.valid ? w.word.length : 0,
+    complexity: w.complexity,
+    relatedness: w.relatedness,
+    verdict: w.verdict,
+  };
 }

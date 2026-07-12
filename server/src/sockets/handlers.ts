@@ -14,7 +14,7 @@ import {
 } from '@app/shared';
 import { GameRoom, type GameRoomCallbacks } from '../game/GameRoom.js';
 import { createRoom, getRoom, removeRoom } from '../game/rooms.js';
-import { announcePrompt, narrate } from '../services/gemini/geminiClient.js';
+import { announcePrompt } from '../services/gemini/geminiClient.js';
 import { textToSpeech } from '../services/elevenlabs/ttsClient.js';
 import { readAuthCookie, verifyAuthToken } from '../services/auth/jwt.js';
 import { ledger } from '../services/solana/ledger.js';
@@ -125,7 +125,6 @@ function makeCallbacks(io: Server, roomCode: string): GameRoomCallbacks {
       room().emit(SocketEvents.NARRATION, { text, audioUrl }),
     requestWinnerPhoto: (playerId) =>
       room().emit(SocketEvents.CAPTURE_WINNER_PHOTO, { playerId }),
-    narrate: (ctx) => narrate(ctx),
     announcePrompt: (prompt, suddenDeath) => announcePrompt(prompt, suddenDeath),
     speak: (text) => textToSpeech(text),
     // Settle the wager on Solana (escrow → winner) AND record both players on the

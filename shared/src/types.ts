@@ -57,6 +57,12 @@ export interface WordOutcome {
   valid: boolean;
   /** Effective length used for comparison (0 when invalid). */
   length: number;
+  /** Gemini's 0–10 sophistication score for the word (0 when invalid). */
+  complexity: number;
+  /** Gemini's 0–10 relatedness-to-prompt score (0 when invalid). */
+  relatedness: number;
+  /** Gemini's short one-line judgment of this specific word. */
+  verdict: string;
 }
 
 /** Result of a resolved round (broadcast after RESOLVE). */

@@ -23,15 +23,6 @@ const RESULT_PAUSE_MS = 3_500;
 // After this many consecutive ties, force a decision so a match always ends.
 const MAX_SUDDEN_DEATH = 3;
 
-/** Context passed to narration so Gemini can comment on the round. */
-export interface RoundNarrationContext {
-  prompt: string;
-  words: Record<PlayerSlot, string | null>;
-  winner: PlayerSlot | null;
-  suddenDeath: boolean;
-  players: Record<PlayerSlot, PlayerState | null>;
-}
-
 /** Match-end settlement input handed to the app to apply on the ledger + DB.
  *  `displayName` is carried per-result so the leaderboard upsert has a name. */
 export interface MatchSettlementInput {
@@ -46,8 +37,6 @@ export interface GameRoomCallbacks {
   broadcastResult(result: MatchResult): void;
   broadcastNarration(text: string, audioUrl: string | null): void;
   requestWinnerPhoto(playerId: string): void;
-  /** Gemini narration → text. */
-  narrate(ctx: RoundNarrationContext): Promise<string>;
   /** Gemini reveal line + optional move hint for a fresh prompt. */
   announcePrompt(prompt: string, suddenDeath: boolean): Promise<string>;
   /** ElevenLabs TTS → audio url/data, or null when voice is stubbed off. */
@@ -227,22 +216,16 @@ export class GameRoom {
       p2: p2.submittedWord,
     };
 
-    const { winner, tie, outcomes } = await resolveWordBattle({
+    // One Gemini call judges both words, decides the winner, and writes the
+    // narration together — see WordBattleResolver/geminiClient.judgeRound.
+    const { winner, tie, outcomes, narration } = await resolveWordBattle({
       prompt: this.prompt!,
       words,
     });
     p1.wordValid = outcomes.p1.valid;
     p2.wordValid = outcomes.p2.valid;
 
-    const narrationText = await this.cb
-      .narrate({
-        prompt: this.prompt!,
-        words,
-        winner,
-        suddenDeath: this.suddenDeath,
-        players: this.players,
-      })
-      .catch(() => this.fallbackNarration(winner, outcomes));
+    const narrationText = narration || this.fallbackNarration(winner, outcomes);
     const narrationAudioUrl = await this.cb.speak(narrationText).catch(() => null);
 
     const result: MatchResult = {
