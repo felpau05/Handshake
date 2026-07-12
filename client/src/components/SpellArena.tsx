@@ -36,6 +36,18 @@ export function SpellArena() {
 
   const deleteLast = () => setWord((w) => w.slice(0, -1));
 
+  // Latest-value refs. Several callbacks below are registered ONCE inside
+  // effects (detector letter handler, keydown listener, countdown expiry) and
+  // would otherwise capture the word/doSubmit from that first render — which
+  // is how timeout- and Enter-submits used to send an empty string no matter
+  // what was actually spelled.
+  const wordRef = useRef('');
+  const doSubmitRef = useRef<(auto?: boolean) => void>(() => {});
+  useEffect(() => {
+    wordRef.current = word;
+    doSubmitRef.current = (auto) => void doSubmit(auto);
+  });
+
   // Attach the already-warm stream to this mount's own <video> element.
   useEffect(() => {
     if (stream && videoRef.current) {
@@ -53,7 +65,21 @@ export function SpellArena() {
     detector.attachVideo(video);
     detector.reset();
 
-    const onLetter = (e: LetterEvent) => setWord((w) => (w.length < 20 ? w + e.letter : w));
+    // The model emits control gestures as labels alongside real letters —
+    // they trigger actions here, never text. (Appending them used to paste
+    // literal "SUBMIT"/"BACKSPACE" into the word.)
+    const onLetter = (e: LetterEvent) => {
+      if (e.letter === 'SUBMIT') {
+        if (wordRef.current) doSubmitRef.current(true); // 👍 with an empty word is a misfire, ignore
+        return;
+      }
+      if (e.letter === 'BACKSPACE') {
+        deleteLast();
+        return;
+      }
+      if (e.letter.length !== 1) return; // future control labels never leak into the word
+      setWord((w) => (w.length < 20 ? w + e.letter : w));
+    };
     const unsubLetter = detector.on('letter', onLetter);
 
     let unsubFrame: (() => void) | null = null;
@@ -100,7 +126,7 @@ export function SpellArena() {
         e.preventDefault();
         deleteLast();
       } else if (e.key === 'Enter') {
-        doSubmit();
+        doSubmitRef.current();
       } else if (/^[a-zA-Z]$/.test(e.key)) {
         setWord((w) => (w.length < 20 ? w + e.key.toUpperCase() : w));
       }
@@ -125,7 +151,10 @@ export function SpellArena() {
     if (submitted || submitting) return;
     setSubmitting(true);
     setSubmitError(null);
-    const ack = await submitWord(word);
+    // wordRef, not `word`: this function is also invoked through stale
+    // closures (countdown expiry, Enter, the SUBMIT gesture) whose captured
+    // `word` may be many letters behind.
+    const ack = await submitWord(wordRef.current);
     setSubmitting(false);
     if (ack.error) {
       // On the auto-submit at timeout, "window closed" just means the server's
@@ -143,7 +172,7 @@ export function SpellArena() {
         <h3>
           Prompt: <span style={{ color: 'var(--accent)' }}>{prompt}</span>
         </h3>
-        <Countdown deadline={deadline} onExpire={() => doSubmit(true)} />
+        <Countdown deadline={deadline} onExpire={() => doSubmitRef.current(true)} />
       </div>
 
       <div className="camera-wrap">

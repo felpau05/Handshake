@@ -73,7 +73,9 @@ async function main(): Promise<void> {
   const eventsEl = document.getElementById('events')!;
   let firstEvent = true;
   detector.on('letter', (e) => {
-    word += e.letter;
+    // Control gestures act on the word instead of appending as text.
+    if (e.letter === 'BACKSPACE') word = word.slice(0, -1);
+    else if (e.letter.length === 1) word += e.letter;
     wordEl.textContent = word;
     lastEl.textContent = `committed "${e.letter}" @ ${(e.confidence * 100).toFixed(0)}%`;
     captureFrame(e.letter, e.confidence);
