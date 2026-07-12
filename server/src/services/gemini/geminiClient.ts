@@ -373,10 +373,29 @@ function parseRoundJudgment(text: string, words: Record<PlayerSlot, string>): Ro
         verdict: typeof o.verdict === 'string' ? o.verdict : '',
       };
     };
-    const player1 = toJudgment(j.player1, words.p1);
-    const player2 = toJudgment(j.player2, words.p2);
+    // Gemini sometimes returns the two judgments under swapped player1/player2
+    // keys (e.g. it reasons about the winner first). Since toJudgment discards
+    // the echoed word and staples validity onto OUR actual word by position, an
+    // unnoticed swap lands "valid" on the wrong word (a real word ruled invalid
+    // while nonsense passes). Realign using Gemini's echoed `word` when it
+    // clearly cross-matches our slots — distinct words, clean cross only.
+    const norm = (s: unknown): string =>
+      typeof s === 'string' ? s.toLowerCase().replace(/[^a-z]/g, '') : '';
+    const a1 = norm(words.p1);
+    const a2 = norm(words.p2);
+    const g1 = norm((j.player1 as { word?: unknown } | undefined)?.word);
+    const g2 = norm((j.player2 as { word?: unknown } | undefined)?.word);
+    const swapped = a1 !== a2 && !!g1 && !!g2 && g1 === a2 && g2 === a1;
+    if (swapped) {
+      console.warn(`[gemini] judgeRound returned swapped player keys — realigning ("${g1}"→p2, "${g2}"→p1)`);
+    }
+
+    const player1 = toJudgment(swapped ? j.player2 : j.player1, words.p1);
+    const player2 = toJudgment(swapped ? j.player1 : j.player2, words.p2);
     let roundWinner: PlayerSlot | null =
       j.roundWinner === 'p1' || j.roundWinner === 'p2' ? j.roundWinner : null;
+    // A swap also flips which slot the model's roundWinner refers to.
+    if (swapped && roundWinner) roundWinner = roundWinner === 'p1' ? 'p2' : 'p1';
     // Our validity backstop may have overruled the model (e.g. it crowned a
     // filler word) — never let an invalid word keep a win over a valid one.
     if (roundWinner === 'p1' && !player1.valid) roundWinner = player2.valid ? 'p2' : null;
