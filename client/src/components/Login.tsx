@@ -36,7 +36,7 @@ export function Login() {
   return (
     <div className="app" style={{ maxWidth: '420px' }}>
       <h1 className="title">
-        Gamemaster <span>RPS</span>
+        Hand<span>shake</span>
       </h1>
       <div className="panel">
         <h3>{mode === 'login' ? 'Log in' : 'Create an account'}</h3>

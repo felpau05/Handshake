@@ -46,7 +46,7 @@ export default function App() {
   return (
     <div className="app">
       <h1 className="title">
-        ASL <span>Word Battle</span>
+        Hand<span>shake</span>
       </h1>
 
       {phase === 'LOBBY' && (
