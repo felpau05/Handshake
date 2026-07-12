@@ -22,6 +22,20 @@ interface MediaStore {
 
 let warmStarted = false;
 
+/** Draw the bundled hand photo to a canvas for detector.warmup() — a frame
+ *  guaranteed to contain a hand, so MediaPipe compiles its landmark-stage
+ *  shaders at page load instead of mid-round. */
+async function loadWarmupHandCanvas(): Promise<HTMLCanvasElement> {
+  const img = new Image();
+  img.src = '/asl-model/warmup-hand.jpg';
+  await img.decode();
+  const canvas = document.createElement('canvas');
+  canvas.width = img.naturalWidth;
+  canvas.height = img.naturalHeight;
+  canvas.getContext('2d')!.drawImage(img, 0, 0);
+  return canvas;
+}
+
 async function acquireCamera(set: (partial: Partial<MediaStore>) => void): Promise<void> {
   if (!navigator.mediaDevices?.getUserMedia) {
     set({ cameraStatus: 'error' });
@@ -70,24 +84,18 @@ export const useMediaStore = create<MediaStore>((set, get) => ({
 
     await Promise.all([acquireCamera(set), detectorPromise]);
 
-    // Force the first inference NOW, against a throwaway video fed by the
-    // warm stream. MediaPipe's GPU delegate and TF.js compile their shaders
-    // on the first real frame — a multi-second main-thread freeze on weaker
-    // machines that used to land exactly when SPELL started (frozen timer,
-    // black video, no overlay). detectorReady is only set after this, so the
-    // server's SPELL_READY gate holds the round until we're truly warm.
-    const { stream, detector } = get();
+    // Force full shader compilation NOW. MediaPipe's landmark stage only
+    // compiles the first time a hand is actually FOUND, so we warm with a
+    // bundled hand image — warming against an empty camera frame left the
+    // multi-second freeze to hit the moment the player first raised a hand
+    // in-round (frozen timer, black video, ~10s of "not detected").
+    // detectorReady is only set after this, so the server's SPELL_READY gate
+    // holds the round until this client can genuinely detect.
+    const { detector } = get();
     if (!detector) return;
     try {
-      if (stream) {
-        const v = document.createElement('video');
-        v.srcObject = stream;
-        v.muted = true;
-        v.playsInline = true;
-        await v.play().catch(() => undefined);
-        detector.attachVideo(v); // SpellArena re-attaches its own <video> later
-      }
-      await detector.warmup();
+      const canvas = await loadWarmupHandCanvas().catch(() => undefined);
+      await detector.warmup(canvas);
     } catch {
       // Best-effort — worst case the compile stall happens in-round as before.
     }

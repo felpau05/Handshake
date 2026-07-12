@@ -34,10 +34,12 @@ export class HandLandmarkExtractor {
     });
   }
 
-  /** Detect a single hand for the given video frame, or null if none is visible. */
-  detect(video: HTMLVideoElement, timestampMs: number): HandReading | null {
+  /** Detect a single hand for the given frame (video, or a canvas — used by
+   *  warmup to force full shader compilation with a known hand image), or
+   *  null if none is visible. */
+  detect(source: HTMLVideoElement | HTMLCanvasElement, timestampMs: number): HandReading | null {
     if (!this.landmarker) return null;
-    const result = this.landmarker.detectForVideo(video, timestampMs);
+    const result = this.landmarker.detectForVideo(source, timestampMs);
     const landmarks = result.landmarks?.[0] as Landmark[] | undefined;
     if (!landmarks) return null;
     const label = result.handednesses?.[0]?.[0]?.categoryName as

@@ -125,8 +125,9 @@ export function SpellArena() {
     };
   }, [detector, detectorReady, cameraStatus]);
 
-  // Wave-to-delete on the same video.
-  useWaveDelete(videoRef, cameraStatus === 'ready', deleteLast);
+  // Wave-to-delete rides the shared detector's frame stream — no second
+  // MediaPipe instance, no shader compile at round start.
+  useWaveDelete(detector, cameraStatus === 'ready' && detectorReady, deleteLast);
 
   // Keyboard: Backspace deletes, letters type (fallback), Enter submits.
   useEffect(() => {

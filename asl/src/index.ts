@@ -29,13 +29,15 @@ export interface AslDetector {
   /** Load MediaPipe + the trained model. Await before start(). */
   init(): Promise<void>;
   /**
-   * Run one throwaway inference through both models. MediaPipe's GPU delegate
-   * and TF.js each lazily compile their shaders on the FIRST real frame — a
-   * multi-second main-thread stall on weaker machines. Call this once after
-   * init() (and ideally after attachVideo, so the MediaPipe path warms too)
-   * to pay that cost up front instead of mid-round.
+   * Run throwaway inference through both models. MediaPipe's GPU delegate
+   * and TF.js each lazily compile their shaders on first use — a multi-second
+   * main-thread stall on weaker machines. Crucially, MediaPipe's LANDMARK
+   * stage only compiles the first time a hand is actually FOUND, so pass
+   * `handSample` (a canvas containing a real hand image) to warm the full
+   * pipeline; warming against an empty camera frame only covers the palm
+   * detector and the stall still hits when the player first raises a hand.
    */
-  warmup(): Promise<void>;
+  warmup(handSample?: HTMLCanvasElement): Promise<void>;
   /** Use a <video> the host already owns/renders. */
   attachVideo(video: HTMLVideoElement): void;
   /** Or let the detector open its own camera; returns the created <video>. */
@@ -106,12 +108,19 @@ export function createAslDetector(options: AslDetectorOptions = {}): AslDetector
       await extractor.init();
       await classifier.init();
     },
-    async warmup() {
+    async warmup(handSample?: HTMLCanvasElement) {
       // Zero-vector predict: output is garbage (discarded) but it forces
       // TF.js to compile its WebGL programs for this architecture now.
       classifier.predict(new Float32Array(VECTOR_SIZE));
-      // One real detect warms MediaPipe's GPU delegate — needs an attached,
-      // ready video. Wait briefly for readiness so the warmup isn't a no-op
+      if (handSample) {
+        // A frame with an actual hand compiles BOTH MediaPipe stages (palm
+        // detector + landmark model). Two passes so tracking state settles.
+        extractor.detect(handSample, performance.now());
+        extractor.detect(handSample, performance.now() + 1);
+        return;
+      }
+      // Fallback: warm against the live video (compiles the palm-detector
+      // stage at least). Wait briefly for readiness so this isn't a no-op
       // when the stream was attached moments ago.
       const deadline = performance.now() + 3000;
       while (video && video.readyState < 2 && performance.now() < deadline) {
