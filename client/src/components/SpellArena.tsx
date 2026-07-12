@@ -26,6 +26,10 @@ export function SpellArena() {
   const [submitted, setSubmitted] = useState(false);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const drawerRef = useRef<DrawingUtils | null>(null);
+  // Live per-frame diagnostics, written imperatively (30fps state updates
+  // would re-render the whole panel). Shows WHY a letter isn't committing:
+  // no hand at all vs. a prediction sitting under the confidence bar.
+  const liveRef = useRef<HTMLSpanElement | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
 
@@ -97,10 +101,16 @@ export function SpellArena() {
         }
         ctx.clearRect(0, 0, canvas.width, canvas.height);
         if (f.landmarks) {
-          const color = f.confidence >= 0.85 ? '#22c55e' : '#f59e0b';
+          // Green at the commit bar (keep in sync with mediaStore minConfidence).
+          const color = f.confidence >= 0.75 ? '#22c55e' : '#f59e0b';
           const pts = f.landmarks.map((l) => ({ ...l, visibility: 0 }));
           drawerRef.current!.drawConnectors(pts, HandLandmarker.HAND_CONNECTIONS, { color, lineWidth: 3 });
           drawerRef.current!.drawLandmarks(pts, { color: '#fff', fillColor: color, radius: 3 });
+        }
+        if (liveRef.current) {
+          liveRef.current.textContent = f.handDetected
+            ? ` · ${f.letter ?? '?'} ${(f.confidence * 100).toFixed(0)}%`
+            : ' · no hand';
         }
       });
     }
@@ -180,6 +190,7 @@ export function SpellArena() {
         <canvas ref={canvasRef} />
         <div className="move-badge">
           {tracking ? 'tracking ✓' : cameraStatus === 'ready' ? 'loading…' : cameraStatus}
+          <span ref={liveRef} />
         </div>
       </div>
 

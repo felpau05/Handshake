@@ -67,7 +67,7 @@ async function main(): Promise<void> {
     capturesEl.prepend(fig);
   }
 
-  const detector = createAslDetector({ minConfidence: 0.85, holdMs: 600 });
+  const detector = createAslDetector({ minConfidence: 0.75, holdMs: 500 });
   await detector.init();
   detector.attachVideo(video);
   const eventsEl = document.getElementById('events')!;
@@ -99,7 +99,7 @@ async function main(): Promise<void> {
   detector.on('frame', (f) => {
     overlayCtx.clearRect(0, 0, overlay.width, overlay.height);
     if (f.landmarks) {
-      const color = f.confidence >= 0.85 ? '#9ae6b4' : '#f6ad55';
+      const color = f.confidence >= 0.75 ? '#9ae6b4' : '#f6ad55';
       const pts = f.landmarks.map((l) => ({ ...l, visibility: 0 }));
       drawer.drawConnectors(pts, HandLandmarker.HAND_CONNECTIONS, { color, lineWidth: 3 });
       drawer.drawLandmarks(pts, { color: '#fff', fillColor: color, radius: 3 });
@@ -108,7 +108,7 @@ async function main(): Promise<void> {
     (hudHand as HTMLElement).style.color = f.handDetected ? '#9ae6b4' : '#fc8181';
     hudPred.textContent = f.letter ?? '—';
     hudConf.textContent = f.handDetected ? `${(f.confidence * 100).toFixed(0)}%` : '—';
-    (hudConf as HTMLElement).style.color = f.confidence >= 0.85 ? '#9ae6b4' : '#f6ad55';
+    (hudConf as HTMLElement).style.color = f.confidence >= 0.75 ? '#9ae6b4' : '#f6ad55';
     window100.push(f.handDetected);
     if (window100.length > 100) window100.shift();
     const rate = (window100.filter(Boolean).length / window100.length) * 100;

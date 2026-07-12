@@ -7,7 +7,13 @@ export interface StabilityConfig {
   minConfidence: number;
   holdMs: number;
   releaseMs: number;
+  /** How long a low-confidence/no-hand dip may last before it wipes the hold
+   *  candidate. Without a grace window, ONE flickery frame restarted the whole
+   *  holdMs — on low-FPS/noisy machines letters never committed at all. */
+  graceMs?: number;
 }
+
+const DEFAULT_GRACE_MS = 250;
 
 export class StabilityFilter {
   private candidate: string | null = null;
@@ -26,12 +32,16 @@ export class StabilityFilter {
     // No hand, or too unsure → count toward a release.
     if (letter === null || confidence < this.cfg.minConfidence) {
       if (this.lowSince === null) this.lowSince = now;
-      if (now - this.lowSince >= this.cfg.releaseMs) {
+      const lowFor = now - this.lowSince;
+      if (lowFor >= this.cfg.releaseMs) {
         // Released: allow the next letter (even a repeat of the last one).
         this.armed = true;
         this.lastEmitted = null;
       }
-      this.candidate = null;
+      // Only a SUSTAINED dip clears the hold candidate. A brief flicker keeps
+      // the hold alive; the clock keeps running through the dip, so a letter
+      // held steadily around it still commits.
+      if (lowFor >= (this.cfg.graceMs ?? DEFAULT_GRACE_MS)) this.candidate = null;
       return null;
     }
 

@@ -35,10 +35,19 @@ const clientDist = path.resolve(
   fileURLToPath(new URL('.', import.meta.url)),
   '../../client/dist',
 );
-app.use(express.static(clientDist));
+app.use(
+  express.static(clientDist, {
+    setHeaders: (res, filePath) => {
+      // index.html must NEVER be cached: a cached copy keeps referencing an
+      // old hashed bundle after a rebuild, so players silently run stale
+      // code until they think to hard-refresh. Hashed assets stay cacheable.
+      if (filePath.endsWith('.html')) res.setHeader('Cache-Control', 'no-store');
+    },
+  }),
+);
 app.get('*', (req, res, next) => {
   if (req.path.startsWith('/api') || req.path.startsWith('/socket.io')) return next();
-  res.sendFile(path.join(clientDist, 'index.html'), (err) => {
+  res.sendFile(path.join(clientDist, 'index.html'), { headers: { 'Cache-Control': 'no-store' } }, (err) => {
     if (err) next(); // client not built yet — fine in dev
   });
 });

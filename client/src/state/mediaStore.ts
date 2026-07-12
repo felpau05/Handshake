@@ -52,9 +52,12 @@ export const useMediaStore = create<MediaStore>((set, get) => ({
 
     // Independent — camera permission and the TF.js model load concurrently.
     const detectorPromise = (async () => {
+      // 0.75/500ms (was 0.85/600ms): the higher bar meant players whose hands
+      // the model knows less well never got a letter to commit at all —
+      // slightly more misreads is a far better failure mode than silence.
       const detector = createAslDetector({
-        minConfidence: 0.85,
-        holdMs: 600,
+        minConfidence: 0.75,
+        holdMs: 500,
         modelUrl: '/asl-model/model.json',
       });
       try {
