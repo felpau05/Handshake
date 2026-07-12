@@ -76,6 +76,19 @@ async function main(): Promise<void> {
   });
   await detector.init();
   detector.attachVideo(video);
+  // MediaPipe's landmark stage only compiles its GPU shaders the first time
+  // it actually finds a hand — without this, that multi-second compile hit
+  // on the first real hand you show it, making the page feel frozen right
+  // when you start using it. Warm against a bundled hand photo instead.
+  statusEl.textContent = 'Warming up detector…';
+  const warmupImg = new Image();
+  warmupImg.src = '/model/warmup-hand.jpg';
+  await warmupImg.decode();
+  const warmupCanvas = document.createElement('canvas');
+  warmupCanvas.width = warmupImg.naturalWidth;
+  warmupCanvas.height = warmupImg.naturalHeight;
+  warmupCanvas.getContext('2d')!.drawImage(warmupImg, 0, 0);
+  await detector.warmup(warmupCanvas);
   const eventsEl = document.getElementById('events')!;
   let firstEvent = true;
   detector.on('letter', (e) => {

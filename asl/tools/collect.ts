@@ -179,6 +179,22 @@ async function main(): Promise<void> {
   // win, which is exactly what makes this tool feel slow to open.
   const extractor = new HandLandmarkExtractor('/mediapipe-wasm', '/model/hand_landmarker.task');
   await extractor.init();
+
+  // MediaPipe's landmark stage only compiles its GPU shaders the first time
+  // it actually finds a hand — without this, that multi-second compile hit
+  // the moment you first posed a letter, making the tool feel frozen right
+  // when you started using it. Warm against a bundled hand photo instead.
+  hintEl.textContent = 'Warming up detector…';
+  const warmupImg = new Image();
+  warmupImg.src = '/model/warmup-hand.jpg';
+  await warmupImg.decode();
+  const warmupCanvas = document.createElement('canvas');
+  warmupCanvas.width = warmupImg.naturalWidth;
+  warmupCanvas.height = warmupImg.naturalHeight;
+  warmupCanvas.getContext('2d')!.drawImage(warmupImg, 0, 0);
+  extractor.detect(warmupCanvas, performance.now());
+  extractor.detect(warmupCanvas, performance.now() + 1);
+
   hintEl.textContent = 'Ready — press a letter key.';
   render();
 
