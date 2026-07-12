@@ -23,8 +23,9 @@ import os
 import sys
 import urllib.request
 
-# 24 static letters — J and Z require motion and are out of scope for the MLP.
-LETTERS = list("ABCDEFGHIKLMNOPQRSTUVWXY")
+# Full alphabet. J and Z are motion signs — imported here as single static frames
+# anyway, so their landmark vectors will overlap I / D respectively.
+LETTERS = list("ABCDEFGHIJKLMNOPQRSTUVWXYZ")
 
 WRIST = 0
 MIDDLE_MCP = 9  # base knuckle of the middle finger — stable scale reference

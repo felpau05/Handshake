@@ -33,14 +33,22 @@
     <div>
       <h1>ASL fingerspelling — data collection</h1>
       <ul>
-        <li>Press a <kbd>letter</kbd> key (A–Z, no J/Z) to select the target.</li>
-        <li>Hold <kbd>Space</kbd> to record samples while posing that letter.</li>
-        <li><kbd>Backspace</kbd> undo last · <kbd>S</kbd> download <code>landmarks.json</code>.</li>
+        <li>Press a <kbd>letter</kbd> key (A–Z) to select the target.</li>
+        <li>Control gestures: <kbd>1</kbd> = 👍 SUBMIT (thumbs up) · <kbd>2</kbd> = 👎 BACKSPACE (thumbs down). Collect these like any letter.</li>
+        <li>Note: J and Z are motion signs collected here as a single static pose — expect I/J and D/Z to be harder to tell apart. Keep 👍 clearly vertical so it doesn't blur into <kbd>A</kbd>.</li>
+        <li>Hold <kbd>Space</kbd> to record samples while posing that letter/gesture.</li>
+        <li><kbd>Backspace</kbd> undo last · <kbd>Delete</kbd> clear all of the selected letter · <kbd>S</kbd> download <code>landmarks.json</code>.</li>
         <li>Aim for ~50–150 per letter, varying hand position &amp; angle.</li>
+        <li>Auto-saved to this browser (<code>localStorage</code>) — survives refresh/close. Nothing is deleted except by you.</li>
       </ul>
       <p>Total samples: <b id="total">0</b> · <span id="status">no hand</span></p>
       <div class="counts" id="counts"></div>
-      <p style="margin-top:16px"><button id="download">Download landmarks.json</button></p>
+      <p style="margin-top:16px">
+        <button id="download">Download landmarks.json</button>
+        <button id="clear" style="background:#822">Clear selected letter</button>
+        <button id="reset" style="background:#500">Reset all</button>
+      </p>
+      <p>Resume from a downloaded file (merges, doesn't replace): <input type="file" id="load" accept="application/json" multiple /></p>
     </div>
     <script type="module" src="./collect.ts"></script>
   </body>

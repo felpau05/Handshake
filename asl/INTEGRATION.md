@@ -18,7 +18,8 @@ server-side process cannot see a remote user's camera.
 - No word assembly / spelling buffer — you append letters yourself.
 - No space / delete / backspace gestures.
 - No UI beyond the dev tools + demo.
-- No J or Z (they require motion; v1 is the 24 static letters).
+- J and Z are collected/trained as single static poses (not true motion detection),
+  so expect them to be less reliable and to overlap with I and D respectively.
 - No networking — it emits in-process events; forward them wherever you like.
 
 ## Install / import
