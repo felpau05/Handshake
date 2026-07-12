@@ -37,44 +37,128 @@ body {
   overflow-x: hidden;
 }
 
-/* Starry night sky — three drifting star fields + two nebula glows, slightly
-   blurred so the glass panels above have something soft to refract. */
+/* Starry night sky — a real Milky Way photograph, gently drifting, with a
+   nebula tint so it blends with the accent palette. The blur happens one layer
+   up (the frosted sheet), the way real glass would do it. */
 body::before {
   content: '';
   position: fixed;
-  inset: -40px; /* bleed so the blur never shows a hard edge */
+  inset: -6%; /* bleed so the drift + blur never reveal an edge */
   z-index: -2;
   pointer-events: none;
   background-image:
-    radial-gradient(ellipse 55% 40% at 20% 12%, rgba(0, 163, 255, 0.14), transparent 65%),
-    radial-gradient(ellipse 45% 38% at 82% 78%, rgba(108, 92, 231, 0.12), transparent 65%),
-    radial-gradient(1.6px 1.6px at 12% 22%, rgba(255, 255, 255, 0.9), transparent 55%),
-    radial-gradient(1.2px 1.2px at 31% 67%, rgba(255, 255, 255, 0.7), transparent 55%),
-    radial-gradient(2px 2px at 47% 15%, rgba(255, 255, 255, 0.85), transparent 55%),
-    radial-gradient(1.3px 1.3px at 58% 82%, rgba(255, 255, 255, 0.6), transparent 55%),
-    radial-gradient(1.7px 1.7px at 71% 39%, rgba(255, 255, 255, 0.85), transparent 55%),
-    radial-gradient(1.1px 1.1px at 84% 12%, rgba(255, 255, 255, 0.65), transparent 55%),
-    radial-gradient(2.2px 2.2px at 92% 58%, rgba(255, 255, 255, 0.8), transparent 55%),
-    radial-gradient(1.2px 1.2px at 8% 88%, rgba(255, 255, 255, 0.6), transparent 55%),
-    radial-gradient(1.5px 1.5px at 39% 42%, rgba(255, 255, 255, 0.75), transparent 55%),
-    radial-gradient(1px 1px at 65% 62%, rgba(255, 255, 255, 0.55), transparent 55%),
-    radial-gradient(1.8px 1.8px at 25% 92%, rgba(255, 255, 255, 0.7), transparent 55%),
-    radial-gradient(1px 1px at 53% 33%, rgba(255, 255, 255, 0.5), transparent 55%),
-    radial-gradient(1.4px 1.4px at 77% 88%, rgba(255, 255, 255, 0.65), transparent 55%),
-    radial-gradient(1px 1px at 95% 30%, rgba(255, 255, 255, 0.55), transparent 55%);
-  background-color: var(--bg);
-  filter: blur(1.6px);
+    linear-gradient(180deg, rgba(10, 12, 24, 0.35), rgba(10, 12, 24, 0.55)),
+    radial-gradient(ellipse 60% 45% at 24% 80%, rgba(214, 78, 195, 0.16), transparent 70%),
+    radial-gradient(ellipse 55% 40% at 78% 18%, rgba(0, 163, 255, 0.12), transparent 70%),
+    url('/night-sky.jpg');
+  background-size: cover;
+  background-position: center;
+  animation: sky-drift 90s ease-in-out infinite alternate;
 }
 
-/* Textured glass sheet over the sky: faint noise + a whisper of frost. */
+@keyframes sky-drift {
+  from {
+    transform: scale(1.02) translate3d(-0.6%, -0.4%, 0);
+  }
+  to {
+    transform: scale(1.1) translate3d(0.8%, 0.6%, 0);
+  }
+}
+
+/* Frosted, textured glass sheet between the sky and the UI: it blurs the
+   photograph behind it (backdrop-filter) and carries the frost texture —
+   fine grain plus larger icy mottling. */
 body::after {
   content: '';
   position: fixed;
   inset: 0;
   z-index: -1;
   pointer-events: none;
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.05'/%3E%3C/svg%3E");
-  background-color: rgba(255, 255, 255, 0.015);
+  backdrop-filter: blur(7px) saturate(125%);
+  -webkit-backdrop-filter: blur(7px) saturate(125%);
+  background-image:
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.07'/%3E%3C/svg%3E"),
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='420' height='420'%3E%3Cfilter id='f'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.045' numOctaves='4' stitchTiles='stitch'/%3E%3CfeColorMatrix type='matrix' values='0 0 0 0 1  0 0 0 0 1  0 0 0 0 1  0 0 0 0.6 0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23f)' opacity='0.06'/%3E%3C/svg%3E");
+  background-color: rgba(255, 255, 255, 0.02);
+}
+
+/* Shooting stars — thin streaks that occasionally cross the sky, behind the
+   glass panels. Elements live in index.html (.sky-fx > i). */
+.sky-fx {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  overflow: hidden;
+}
+.sky-fx i {
+  position: absolute;
+  width: 130px;
+  height: 2px;
+  border-radius: 999px;
+  background: linear-gradient(90deg, rgba(255, 255, 255, 0), rgba(255, 255, 255, 0.95));
+  filter: drop-shadow(0 0 6px rgba(255, 255, 255, 0.7));
+  opacity: 0;
+  animation: shoot 17s linear infinite;
+}
+.sky-fx i:nth-child(1) {
+  top: 6%;
+  left: -12%;
+  animation-delay: 3s;
+}
+.sky-fx i:nth-child(2) {
+  top: 26%;
+  left: -10%;
+  width: 95px;
+  animation-delay: 9.5s;
+  animation-duration: 21s;
+}
+.sky-fx i:nth-child(3) {
+  top: 55%;
+  left: -14%;
+  width: 150px;
+  animation-delay: 15s;
+  animation-duration: 26s;
+}
+@keyframes shoot {
+  0% {
+    transform: translate3d(0, 0, 0) rotate(16deg);
+    opacity: 0;
+  }
+  1.5% {
+    opacity: 1;
+  }
+  11% {
+    transform: translate3d(125vw, 38vh, 0) rotate(16deg);
+    opacity: 0;
+  }
+  100% {
+    transform: translate3d(125vw, 38vh, 0) rotate(16deg);
+    opacity: 0;
+  }
+}
+
+/* Scene transitions: every panel glides in when a phase mounts it. */
+.panel {
+  animation: panel-in 0.45s cubic-bezier(0.2, 0.9, 0.3, 1) both;
+}
+@keyframes panel-in {
+  from {
+    opacity: 0;
+    transform: translateY(14px) scale(0.985);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  body::before,
+  .sky-fx i,
+  .panel {
+    animation: none;
+  }
 }
 
 .app {
