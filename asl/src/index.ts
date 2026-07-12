@@ -5,7 +5,7 @@
 import { HandLandmarkExtractor } from './landmarks.js';
 import { LetterClassifier } from './classifier.js';
 import { StabilityFilter } from './stability.js';
-import { normalizeLandmarks } from './normalize.js';
+import { normalizeLandmarks, VECTOR_SIZE } from './normalize.js';
 import type { AslDetectorOptions, LetterEvent, Landmark } from './types.js';
 
 export type { AslDetectorOptions, LetterEvent, Landmark, Handedness } from './types.js';
@@ -28,6 +28,14 @@ export interface FrameDebug {
 export interface AslDetector {
   /** Load MediaPipe + the trained model. Await before start(). */
   init(): Promise<void>;
+  /**
+   * Run one throwaway inference through both models. MediaPipe's GPU delegate
+   * and TF.js each lazily compile their shaders on the FIRST real frame — a
+   * multi-second main-thread stall on weaker machines. Call this once after
+   * init() (and ideally after attachVideo, so the MediaPipe path warms too)
+   * to pay that cost up front instead of mid-round.
+   */
+  warmup(): Promise<void>;
   /** Use a <video> the host already owns/renders. */
   attachVideo(video: HTMLVideoElement): void;
   /** Or let the detector open its own camera; returns the created <video>. */
@@ -97,6 +105,21 @@ export function createAslDetector(options: AslDetectorOptions = {}): AslDetector
     async init() {
       await extractor.init();
       await classifier.init();
+    },
+    async warmup() {
+      // Zero-vector predict: output is garbage (discarded) but it forces
+      // TF.js to compile its WebGL programs for this architecture now.
+      classifier.predict(new Float32Array(VECTOR_SIZE));
+      // One real detect warms MediaPipe's GPU delegate — needs an attached,
+      // ready video. Wait briefly for readiness so the warmup isn't a no-op
+      // when the stream was attached moments ago.
+      const deadline = performance.now() + 3000;
+      while (video && video.readyState < 2 && performance.now() < deadline) {
+        await new Promise((r) => setTimeout(r, 50));
+      }
+      if (video && video.readyState >= 2) {
+        extractor.detect(video, performance.now());
+      }
     },
     attachVideo(v) {
       video = v;

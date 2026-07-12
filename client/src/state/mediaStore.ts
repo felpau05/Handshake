@@ -40,7 +40,7 @@ async function acquireCamera(set: (partial: Partial<MediaStore>) => void): Promi
   }
 }
 
-export const useMediaStore = create<MediaStore>((set) => ({
+export const useMediaStore = create<MediaStore>((set, get) => ({
   stream: null,
   cameraStatus: 'idle',
   detector: null,
@@ -59,13 +59,36 @@ export const useMediaStore = create<MediaStore>((set) => ({
       });
       try {
         await detector.init();
-        set({ detector, detectorReady: true });
+        set({ detector });
       } catch {
         set({ detector: null, detectorReady: false }); // SpellArena falls back to keyboard entry
       }
     })();
 
     await Promise.all([acquireCamera(set), detectorPromise]);
+
+    // Force the first inference NOW, against a throwaway video fed by the
+    // warm stream. MediaPipe's GPU delegate and TF.js compile their shaders
+    // on the first real frame — a multi-second main-thread freeze on weaker
+    // machines that used to land exactly when SPELL started (frozen timer,
+    // black video, no overlay). detectorReady is only set after this, so the
+    // server's SPELL_READY gate holds the round until we're truly warm.
+    const { stream, detector } = get();
+    if (!detector) return;
+    try {
+      if (stream) {
+        const v = document.createElement('video');
+        v.srcObject = stream;
+        v.muted = true;
+        v.playsInline = true;
+        await v.play().catch(() => undefined);
+        detector.attachVideo(v); // SpellArena re-attaches its own <video> later
+      }
+      await detector.warmup();
+    } catch {
+      // Best-effort — worst case the compile stall happens in-round as before.
+    }
+    set({ detectorReady: true });
   },
 
   retryCamera: () => acquireCamera(set),
