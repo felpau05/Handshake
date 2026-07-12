@@ -7,10 +7,16 @@ import App from './App.js';
 import { AccountBar, Login } from './components/Login.js';
 import { DevToolsToggle } from './components/DevToolsToggle.js';
 import { useAuthStore } from './state/authStore.js';
+import { useMediaWarmup } from './hooks/useMediaWarmup.js';
 
 export function Root() {
   const status = useAuthStore((s) => s.status);
   const checkSession = useAuthStore((s) => s.checkSession);
+
+  // Starts the camera + loads the ASL model the moment the page loads,
+  // regardless of login state — by the time a match actually reaches SPELL,
+  // both are already warm instead of adding a fresh startup delay each round.
+  useMediaWarmup();
 
   useEffect(() => {
     checkSession();

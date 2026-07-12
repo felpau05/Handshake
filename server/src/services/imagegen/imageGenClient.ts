@@ -2,10 +2,10 @@
 // leaderboard avatar. Reuses the Gemini SDK's image model to avoid onboarding a
 // 5th vendor. With STUB_IMAGE_GEN=true (default) it returns the original photo
 // unchanged, so the whole winner→avatar pipeline runs end-to-end for free.
-import { GoogleGenAI } from '@google/genai';
 import { env, features } from '../../config/env.js';
+import { createGeminiClient } from '../gemini/client.js';
 
-const ai = features.imageGen ? new GoogleGenAI({ apiKey: env.GEMINI_API_KEY! }) : null;
+const ai = features.imageGen ? createGeminiClient() : null;
 
 export const DEFAULT_STYLE_PROMPT =
   'Transform this portrait into a bold, heroic comic-book trading-card illustration, ' +

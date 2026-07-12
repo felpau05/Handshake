@@ -16,6 +16,7 @@ import { photoRouter } from './routes/photo.js';
 import { elevenlabsTestRouter } from './routes/elevenlabsTest.js';
 import { authRouter } from './routes/auth.js';
 import { connectMongo } from './services/mongo/connection.js';
+import { prewarmFillerNarration } from './game/fillerNarration.js';
 
 const app = express();
 // credentials: true + a matched Origin (not '*') is required for the browser
@@ -53,6 +54,7 @@ registerSocketHandlers(io);
 
 async function start(): Promise<void> {
   await connectMongo(); // falls back to in-memory leaderboard if unset/unreachable
+  prewarmFillerNarration(); // synthesize "thinking" filler lines in the background now, not on first use
   httpServer.listen(env.PORT, () => {
     console.log(`\n🎮  Gamemaster RPS server on http://localhost:${env.PORT}`);
     console.log(`    Socket.IO + REST ready. Client origin: ${env.CLIENT_ORIGIN}\n`);

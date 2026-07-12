@@ -7,11 +7,11 @@
 //   3. suggestMove()    → a hint of a good word to sign ("says what move to use")
 // All degrade gracefully: with no GEMINI_API_KEY they return canned/stub results
 // so the game is fully playable offline. Fill in prompt tuning where marked TODO.
-import { GoogleGenAI } from '@google/genai';
 import type { PlayerSlot } from '@app/shared';
-import { env, features } from '../../config/env.js';
+import { env } from '../../config/env.js';
+import { createGeminiClient } from './client.js';
 
-const ai = features.gemini ? new GoogleGenAI({ apiKey: env.GEMINI_API_KEY! }) : null;
+const ai = createGeminiClient();
 
 /** Gemini's judgment of a single player's word. */
 export interface WordJudgment {
@@ -39,14 +39,18 @@ export interface RoundJudgment {
 /** Reveal line for a fresh prompt word (voiced by ElevenLabs). */
 export async function announcePrompt(prompt: string, suddenDeath: boolean): Promise<string> {
   if (!ai) return cannedPromptLine(prompt, suddenDeath);
-  const flavor = suddenDeath ? 'This is SUDDEN DEATH. ' : '';
+  const flavor = suddenDeath
+    ? 'This is SUDDEN DEATH — raise the stakes, sound a little unhinged about it. '
+    : '';
   const res = await ai.models.generateContent({
     model: env.GEMINI_MODEL,
-    // TODO(team): tune tone. One short, hype game-show sentence.
     contents:
-      `You are a hype game-show host. ${flavor}The prompt word is "${prompt}". ` +
-      `In ONE short sentence, reveal it and tell both players to spell the biggest ` +
-      `related word in sign language. No emojis.`,
+      `You're a snarky, high-energy game-show host with zero patience for boring ` +
+      `words. ${flavor}The theme is "${prompt}". In ONE short, funny sentence, ` +
+      `reveal it and dare both players to sign the biggest, most impressive ` +
+      `related word they've got — sound like you're already expecting someone to ` +
+      `embarrass themselves. No emojis, no markdown/asterisks — this gets read ` +
+      `aloud and shown as plain text.`,
   });
   return (res.text ?? cannedPromptLine(prompt, suddenDeath)).trim();
 }
@@ -70,18 +74,30 @@ export async function judgeRound(
     const res = await ai.models.generateContent({
       model: env.GEMINI_MODEL,
       contents:
-        `You are the judge and hype host for an ASL fingerspelling word battle. ` +
+        `You are a witty, slightly savage judge and hype host for an ASL ` +
+        `fingerspelling word battle — think game-show host crossed with a roast ` +
+        `comedian, but the roasting is aimed at the WORD CHOICES, never at the ` +
+        `players themselves. ` +
         `The theme is "${prompt}". ` +
         `Player 1 signed "${words.p1 || '(nothing)'}". ` +
         `Player 2 signed "${words.p2 || '(nothing)'}". ` +
         `For each player, judge: valid (a real English word), complexity ` +
         `(0-10, how sophisticated/impressive the word is), relatedness (0-10, ` +
-        `how well it relates to the theme; 0 if invalid), and a short punchy ` +
-        `verdict line on that word. Then decide roundWinner ("p1" or "p2") by ` +
-        `weighing validity, relatedness, and complexity together — an invalid ` +
-        `or unrelated word must lose to a valid related one regardless of raw ` +
-        `length. If it's a genuine toss-up, roundWinner is null. Finally write ` +
-        `ONE short hype sentence of narration naming both words and the winner. ` +
+        `how well it relates to the theme; 0 if invalid), and a short, funny, ` +
+        `punchy verdict line reacting to THAT specific word — roast a weak or ` +
+        `unrelated pick, hype up a clever one. ` +
+        `Then decide roundWinner ("p1" or "p2") by weighing validity, ` +
+        `relatedness, and complexity together — an invalid or unrelated word ` +
+        `must lose to a valid related one regardless of raw length. If it's a ` +
+        `genuine toss-up (both equally strong, or both weak/invalid), ` +
+        `roundWinner is null. ` +
+        `Finally write ONE short, funny, snarky sentence of narration that ` +
+        `actually reacts to what happened: if there's a winner, name both ` +
+        `words and razz the loser's pick while hyping the winner's; if ` +
+        `roundWinner is null, lean into the anticlimax of a dead-even standoff ` +
+        `and tease that it's headed to sudden death — do NOT declare a winner ` +
+        `in that line. Every string value (verdict, narration) is plain text, ` +
+        `read aloud and shown as-is — no markdown, no asterisks, no emojis. ` +
         `Respond with ONLY strict JSON, no prose, no markdown fences, in exactly ` +
         `this shape: {"player1":{"word":string,"valid":boolean,"complexity":number,` +
         `"relatedness":number,"verdict":string},"player2":{...same shape...},` +
@@ -119,12 +135,16 @@ function cannedPromptLine(prompt: string, suddenDeath: boolean): string {
 }
 
 /**
- * Deterministic offline judgment — used with no GEMINI_API_KEY, and as the
- * fallback when a real call fails or returns unparseable JSON. Accepts any
- * word of 2+ letters (mirroring the old validateWord stub) and picks the
- * winner by length, same rule as shared/rules.ts's decideBattle.
+ * Deterministic offline judgment — used with no Gemini credential configured,
+ * and as the fallback when a real call fails or returns unparseable JSON.
+ * Accepts any word of 2+ letters (mirroring the old validateWord stub) and
+ * picks the winner by length, same rule as shared/rules.ts's decideBattle.
+ * Exported so tests can exercise this deterministic path directly rather than
+ * through judgeRound(), which correctly calls the real API whenever a
+ * credential IS configured — including in dev/test environments that happen
+ * to have one in server/.env.
  */
-function stubJudgment(prompt: string, words: Record<PlayerSlot, string>): RoundJudgment {
+export function stubJudgment(prompt: string, words: Record<PlayerSlot, string>): RoundJudgment {
   const mk = (word: string): WordJudgment => {
     const valid = word.length >= 2;
     return {
@@ -160,11 +180,14 @@ function parseRoundJudgment(text: string, words: Record<PlayerSlot, string>): Ro
     const match = text.match(/\{[\s\S]*\}/);
     if (!match) return null;
     const j = JSON.parse(match[0]);
-    const toJudgment = (raw: unknown, fallbackWord: string): WordJudgment => {
+    // The actual word is authoritative — it's the exact string we submitted,
+    // never Gemini's echo of it, which can drift (e.g. parroting back the
+    // "(nothing)" placeholder we send for prompt context on an empty word).
+    const toJudgment = (raw: unknown, actualWord: string): WordJudgment => {
       const o = (raw ?? {}) as Record<string, unknown>;
       const valid = Boolean(o.valid);
       return {
-        word: typeof o.word === 'string' && o.word ? o.word : fallbackWord,
+        word: actualWord,
         valid,
         complexity: valid ? clamp0to10(o.complexity) : 0,
         relatedness: valid ? clamp0to10(o.relatedness) : 0,

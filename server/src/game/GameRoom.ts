@@ -14,14 +14,41 @@ import type {
 import { STAKE_OPTIONS } from '@app/shared';
 import { pickPromptWord } from './promptWords.js';
 import { resolveWordBattle } from './WordBattleResolver.js';
+import { getFillerNarration } from './fillerNarration.js';
 
 // ── Tunable match config ─────────────────────────────────────────────────────
 export const STARTING_COINS = 100;
 export const DEFAULT_STAKE = STAKE_OPTIONS[1]; // 20
 export const SPELL_DURATION_MS = 25_000;
+// Floor for the post-result pause — the real pause is however long the result
+// narration takes to say (see estimateSpeechMs), never less than this.
 const RESULT_PAUSE_MS = 3_500;
 // After this many consecutive ties, force a decision so a match always ends.
 const MAX_SUDDEN_DEATH = 3;
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * Rough estimate of how long a line takes to say out loud, so the server can
+ * hold a phase open until the narration actually finishes instead of racing
+ * ahead of it (~150 wpm speaking pace + a small safety buffer). Applied
+ * whether or not real voice is configured, so text-only play gets the same
+ * pacing/suspense.
+ */
+function estimateSpeechMs(text: string): number {
+  const words = text.trim().split(/\s+/).filter(Boolean).length;
+  const speakingMs = (words / 150) * 60_000;
+  return Math.max(1200, speakingMs) + 400;
+}
+
+/** Result of prefetching (or freshly generating) a prompt's reveal. */
+interface PromptReveal {
+  prompt: string;
+  line: string;
+  audio: string | null;
+}
 
 /** Match-end settlement input handed to the app to apply on the ledger + DB.
  *  `displayName` is carried per-result so the leaderboard upsert has a name. */
@@ -61,6 +88,11 @@ export class GameRoom {
   private players: Record<PlayerSlot, PlayerState | null> = { p1: null, p2: null };
   private usedPrompts: string[] = [];
   private timer: NodeJS.Timeout | null = null;
+  /** Speculative prefetch of the next prompt's reveal (theme + banter audio),
+   *  kicked off ahead of need (see enterStake/resolve) so it's usually already
+   *  ready by the time startPrompt() actually needs it. Discarded, not
+   *  awaited, if the round it was hedging for turns out unneeded. */
+  private nextPromptCache: Promise<PromptReveal> | null = null;
 
   constructor(
     roomCode: string,
@@ -128,6 +160,7 @@ export class GameRoom {
     if (!p || this.phase !== 'LOBBY') return;
     p.ready = ready;
     this.broadcast();
+    console.log(`[GameRoom ${this.roomCode}] ${p.displayName} ready (${slot})`);
     if (this.players.p1?.ready && this.players.p2?.ready) {
       this.enterStake();
     }
@@ -144,6 +177,10 @@ export class GameRoom {
     this.usedPrompts = [];
     this.suddenDeathCount = 0;
     this.setPhase('STAKE', null);
+    console.log(`[GameRoom ${this.roomCode}] LOBBY -> STAKE; prefetching first prompt reveal in the background`);
+    // Kicked off now, while players are setting the stake, so it's usually
+    // already ready by the time STAKE locks in and startPrompt() needs it.
+    this.nextPromptCache = this.startPromptPrefetch(false);
   }
 
   /** Either player may set the stake; readying up locks it, collects escrow, and
@@ -155,6 +192,7 @@ export class GameRoom {
     this.stake = Math.floor(stake);
     p.ready = true;
     this.broadcast();
+    console.log(`[GameRoom ${this.roomCode}] ${p.displayName} locked in stake=${this.stake}`);
     if (this.players.p1?.ready && this.players.p2?.ready) {
       // Fire-and-forget escrow collection at match start — must never block or
       // break the match if a wallet/chain call fails.
@@ -162,12 +200,29 @@ export class GameRoom {
       void this.cb
         .collectEscrow(this.roomCode, [a.playerId, b.playerId])
         .catch((err) => console.error(`[GameRoom ${this.roomCode}] collectEscrow failed:`, err));
+      console.log(`[GameRoom ${this.roomCode}] STAKE locked by both players -> starting first prompt`);
       void this.startPrompt(false);
     }
     return {};
   }
 
   // ── PROMPT → SPELL ─────────────────────────────────────────────────────────
+
+  /** Kicks off Gemini announcePrompt() + ElevenLabs speak() for a fresh prompt
+   *  word. Does NOT commit it to usedPrompts — only startPrompt() does that,
+   *  once it actually consumes the result — so speculative callers (enterStake,
+   *  resolve) can prefetch work that might end up discarded (a decisive round
+   *  never needs the "next sudden-death prompt" it hedged for). */
+  private startPromptPrefetch(suddenDeath: boolean): Promise<PromptReveal> {
+    const prompt = pickPromptWord(this.usedPrompts);
+    return (async () => {
+      const line = await this.cb
+        .announcePrompt(prompt, suddenDeath)
+        .catch(() => this.fallbackPromptLine(prompt, suddenDeath));
+      const audio = await this.cb.speak(line).catch(() => null);
+      return { prompt, line, audio };
+    })();
+  }
 
   private async startPrompt(suddenDeath: boolean): Promise<void> {
     this.clearTimer();
@@ -177,16 +232,38 @@ export class GameRoom {
       p.submittedWord = null;
       p.wordValid = null;
     }
-    this.prompt = pickPromptWord(this.usedPrompts);
-    this.usedPrompts.push(this.prompt);
     this.setPhase('PROMPT', null);
 
-    const line = await this.cb
-      .announcePrompt(this.prompt, suddenDeath)
-      .catch(() => this.fallbackPromptLine(this.prompt!, suddenDeath));
-    const audio = await this.cb.speak(line).catch(() => null);
+    let pending = this.nextPromptCache;
+    this.nextPromptCache = null;
+    if (pending) {
+      console.log(`[GameRoom ${this.roomCode}] PROMPT begins — using prefetched reveal (no wait)`);
+    } else {
+      // No prefetch was ready (e.g. STAKE locked in faster than the prefetch
+      // finished) — play a cached filler line (real, pre-synthesized audio,
+      // zero extra latency) while generating fresh.
+      console.log(`[GameRoom ${this.roomCode}] PROMPT begins — no prefetch ready, generating fresh + playing filler`);
+      const filler = await getFillerNarration('prompt').catch(() => null);
+      if (filler) {
+        console.log(`[GameRoom ${this.roomCode}] narration (filler, before reveal ready): "${filler.text}"`);
+        this.cb.broadcastNarration(filler.text, filler.audioUrl);
+      }
+      pending = this.startPromptPrefetch(suddenDeath);
+    }
+
+    const { prompt, line, audio } = await pending;
+    this.prompt = prompt;
+    this.usedPrompts.push(prompt);
+    console.log(`[GameRoom ${this.roomCode}] narration (reveal) broadcast: "${line}"`);
     this.cb.broadcastNarration(line, audio);
 
+    // Hold PROMPT open until the reveal line actually finishes being said —
+    // otherwise SPELL (and its submit timer) starts while the host is still
+    // mid-sentence.
+    await sleep(estimateSpeechMs(line));
+    if (this.phase !== 'PROMPT') return; // room was reset/abandoned meanwhile
+
+    console.log(`[GameRoom ${this.roomCode}] PROMPT -> SPELL (submission window opens)`);
     this.setPhase('SPELL', SPELL_DURATION_MS);
     this.armTimer(() => void this.resolve(), SPELL_DURATION_MS);
   }
@@ -197,6 +274,7 @@ export class GameRoom {
     if (!p || this.phase !== 'SPELL') return;
     p.submittedWord = word;
     this.broadcast();
+    console.log(`[GameRoom ${this.roomCode}] ${p.displayName} submitted "${word}"`);
     if (this.players.p1?.submittedWord !== null && this.players.p2?.submittedWord !== null) {
       void this.resolve();
     }
@@ -208,6 +286,22 @@ export class GameRoom {
     this.clearTimer();
     if (this.phase !== 'SPELL') return;
     this.setPhase('RESOLVE', null);
+    console.log(`[GameRoom ${this.roomCode}] SPELL -> RESOLVE`);
+
+    // Speculatively prefetch the NEXT sudden-death prompt now, in parallel
+    // with judging below — the judgment can't be known ahead of the words
+    // players actually submitted, but the next prompt's content doesn't
+    // depend on that at all. If this round ties, startPrompt() picks this up
+    // already-ready; if it's decisive, it's simply discarded (unused).
+    const suddenDeathPrefetch = this.startPromptPrefetch(true);
+
+    // Instant placeholder — judgeRound() is a real API call and takes a few
+    // seconds; without this the screen just goes dead the moment SPELL ends.
+    const filler = await getFillerNarration('resolve').catch(() => null);
+    if (filler) {
+      console.log(`[GameRoom ${this.roomCode}] narration (filler, while judging): "${filler.text}"`);
+      this.cb.broadcastNarration(filler.text, filler.audioUrl);
+    }
 
     const p1 = this.players.p1!;
     const p2 = this.players.p2!;
@@ -227,6 +321,12 @@ export class GameRoom {
 
     const narrationText = narration || this.fallbackNarration(winner, outcomes);
     const narrationAudioUrl = await this.cb.speak(narrationText).catch(() => null);
+    // Without this, the client's VoicePlayer keeps showing/playing whatever
+    // NARRATION event fired last (the PROMPT reveal line) straight through
+    // RESOLVE and MATCH_END — match_result carries the real outcome text as
+    // data, but nothing tells the narration display to switch to it.
+    console.log(`[GameRoom ${this.roomCode}] narration (result) broadcast: "${narrationText}" (winner=${winner}, tie=${tie})`);
+    this.cb.broadcastNarration(narrationText, narrationAudioUrl);
 
     const result: MatchResult = {
       winner,
@@ -238,21 +338,33 @@ export class GameRoom {
     this.cb.broadcastResult(result);
     this.broadcast();
 
+    // Pause at least RESULT_PAUSE_MS, but never less than the result
+    // narration actually takes to say — otherwise a longer, funnier line
+    // gets cut off by sudden death / match end before it finishes.
+    const pauseMs = Math.max(RESULT_PAUSE_MS, estimateSpeechMs(narrationText));
+
     if (tie) {
       this.suddenDeathCount += 1;
       if (this.suddenDeathCount >= MAX_SUDDEN_DEATH) {
         // Too many ties — force a decision so the match always ends. Decide by
         // raw letter count (validity-agnostic); still tied → deterministic pick.
         const forced = this.forceDecide(words);
-        this.armTimer(() => this.endMatch(forced), RESULT_PAUSE_MS);
+        void suddenDeathPrefetch.catch(() => undefined); // unused — discard
+        console.log(`[GameRoom ${this.roomCode}] tie limit reached -> forcing a decision instead of another sudden death`);
+        this.armTimer(() => this.endMatch(forced), pauseMs);
         return;
       }
-      // Otherwise, another sudden-death prompt after a brief pause.
-      this.armTimer(() => void this.startPrompt(true), RESULT_PAUSE_MS);
+      // The next prompt is very likely already ready (prefetched above) —
+      // startPrompt() will pick it straight up with no wait.
+      this.nextPromptCache = suddenDeathPrefetch;
+      console.log(`[GameRoom ${this.roomCode}] tie -> sudden death (next prompt prefetch in flight since judging started)`);
+      this.armTimer(() => void this.startPrompt(true), pauseMs);
       return;
     }
     this.suddenDeathCount = 0;
-    this.armTimer(() => this.endMatch(winner!), RESULT_PAUSE_MS);
+    void suddenDeathPrefetch.catch(() => undefined); // unused — match is ending, discard
+    console.log(`[GameRoom ${this.roomCode}] decisive result (winner=${winner}) -> MATCH_END`);
+    this.armTimer(() => this.endMatch(winner!), pauseMs);
   }
 
   // ── MATCH_END ──────────────────────────────────────────────────────────────
@@ -267,6 +379,7 @@ export class GameRoom {
     l.totalCoins -= this.stake;
     this.setPhase('MATCH_END', null);
     this.broadcast();
+    console.log(`[GameRoom ${this.roomCode}] MATCH_END — ${w.displayName} wins, stake ${this.stake}`);
 
     // Fire-and-forget: settlement (ledger + leaderboard) must never block
     // match-end or crash the room on a chain/DB hiccup.

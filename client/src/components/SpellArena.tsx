@@ -1,20 +1,28 @@
 // SPELL phase UI. Owns everything the ASL detector does not: word assembly from
 // letter events, wave-to-delete (+ Backspace fallback), the countdown, and
 // submit. The detector is a black box that emits deduped LetterEvents; this
-// component turns them into a word and sends only the final string to the server.
+// component turns them into a word and sends only the final string to the
+// server. The camera stream and the detector's model are both warmed once at
+// app load (see mediaStore/useMediaWarmup) — this component only attaches to
+// what's already ready, so re-mounting between rounds costs nothing.
 import { useEffect, useRef, useState } from 'react';
-import { createAslDetector, type AslDetector, type LetterEvent } from '@app/asl';
-import { useCamera } from '../hooks/useCamera.js';
+import type { LetterEvent } from '@app/asl';
+import { useMediaStore } from '../state/mediaStore.js';
 import { useWaveDelete } from '../hooks/useWaveDelete.js';
 import { submitWord, sendSpellProgress } from '../hooks/useSocket.js';
 import { useGameStore } from '../state/gameStore.js';
 
 export function SpellArena() {
-  const { videoRef, status, start } = useCamera();
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+  const stream = useMediaStore((s) => s.stream);
+  const cameraStatus = useMediaStore((s) => s.cameraStatus);
+  const retryCamera = useMediaStore((s) => s.retryCamera);
+  const detector = useMediaStore((s) => s.detector);
+  const detectorReady = useMediaStore((s) => s.detectorReady);
+
   const [word, setWord] = useState('');
-  const [detectorReady, setDetectorReady] = useState(false);
+  const [tracking, setTracking] = useState(false);
   const [submitted, setSubmitted] = useState(false);
-  const detectorRef = useRef<AslDetector | null>(null);
 
   const prompt = useGameStore((s) => s.match?.prompt ?? '');
   const deadline = useGameStore((s) => s.match?.phaseDeadline ?? null);
@@ -23,48 +31,34 @@ export function SpellArena() {
 
   const deleteLast = () => setWord((w) => w.slice(0, -1));
 
-  // Start the camera on mount.
+  // Attach the already-warm stream to this mount's own <video> element.
   useEffect(() => {
-    void start();
-  }, [start]);
+    if (stream && videoRef.current) {
+      videoRef.current.srcObject = stream;
+      videoRef.current.play().catch(() => undefined);
+    }
+  }, [stream]);
 
-  // Wire the ASL detector once the camera is ready.
+  // Point the shared (already-initialized) detector at this mount's video.
+  // reset() clears stability state left over from a previous round; stop()
+  // on cleanup pauses it (NOT destroy — the model stays loaded for next time).
   useEffect(() => {
-    if (status !== 'ready' || detectorRef.current) return;
-    const detector = createAslDetector({
-      minConfidence: 0.85,
-      holdMs: 600,
-      modelUrl: '/asl-model/model.json',
-    });
-    detectorRef.current = detector;
-    let disposed = false;
-    let unsubscribe: (() => void) | null = null;
-
+    if (!detector || !detectorReady || cameraStatus !== 'ready' || !videoRef.current) return;
+    detector.attachVideo(videoRef.current);
+    detector.reset();
     const onLetter = (e: LetterEvent) => setWord((w) => (w.length < 20 ? w + e.letter : w));
-
-    (async () => {
-      try {
-        await detector.init();
-        if (disposed) return detector.destroy();
-        detector.attachVideo(videoRef.current!);
-        unsubscribe = detector.on('letter', onLetter);
-        detector.start();
-        setDetectorReady(true);
-      } catch {
-        setDetectorReady(false); // fall back to keyboard entry
-      }
-    })();
-
+    const unsubscribe = detector.on('letter', onLetter);
+    detector.start();
+    setTracking(true);
     return () => {
-      disposed = true;
-      unsubscribe?.();
-      detector.destroy();
-      detectorRef.current = null;
+      unsubscribe();
+      detector.stop();
+      setTracking(false);
     };
-  }, [status, videoRef]);
+  }, [detector, detectorReady, cameraStatus]);
 
   // Wave-to-delete on the same video.
-  useWaveDelete(videoRef, status === 'ready', deleteLast);
+  useWaveDelete(videoRef, cameraStatus === 'ready', deleteLast);
 
   // Keyboard: Backspace deletes, letters type (fallback), Enter submits.
   useEffect(() => {
@@ -107,12 +101,12 @@ export function SpellArena() {
       <div className="camera-wrap">
         <video ref={videoRef} playsInline muted />
         <div className="move-badge">
-          {detectorReady ? 'tracking ✓' : status === 'ready' ? 'loading…' : status}
+          {tracking ? 'tracking ✓' : cameraStatus === 'ready' ? 'loading…' : cameraStatus}
         </div>
       </div>
 
-      {status !== 'ready' && (
-        <button className="primary" style={{ marginTop: '0.75rem' }} onClick={start}>
+      {cameraStatus !== 'ready' && (
+        <button className="primary" style={{ marginTop: '0.75rem' }} onClick={retryCamera}>
           Enable camera
         </button>
       )}

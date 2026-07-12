@@ -1,7 +1,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { decideBattle, effectiveLength, normalizeWord } from '@app/shared';
-import { judgeRound } from '../services/gemini/geminiClient.js';
+import { stubJudgment } from '../services/gemini/geminiClient.js';
 import { resolveWordBattle } from './WordBattleResolver.js';
 
 const outcome = (word: string, valid: boolean) => ({
@@ -54,11 +54,14 @@ describe('decideBattle', () => {
   });
 });
 
-// judgeRound has no GEMINI_API_KEY in this test environment (server/.env),
-// so these exercise its deterministic offline stub — no network involved.
-describe('judgeRound (offline stub)', () => {
-  it('the longer valid word wins, and both players get a scored judgment', async () => {
-    const j = await judgeRound('water', { p1: 'river', p2: 'rain' });
+// Tests the deterministic offline stub directly (pure, synchronous, no
+// network) — NOT judgeRound() itself, which correctly calls the real API
+// whenever a credential is configured (as it now is in server/.env). Calling
+// judgeRound() here would make these tests depend on ambient environment
+// state instead of testing the fallback path they're meant to cover.
+describe('stubJudgment (offline fallback)', () => {
+  it('the longer valid word wins, and both players get a scored judgment', () => {
+    const j = stubJudgment('water', { p1: 'river', p2: 'rain' });
     assert.equal(j.roundWinner, 'p1');
     assert.equal(j.player1.valid, true);
     assert.equal(j.player2.valid, true);
@@ -66,20 +69,19 @@ describe('judgeRound (offline stub)', () => {
   });
 
   it('an invalid (too-short) word loses to a valid one regardless of raw length', () => {
-    return judgeRound('ocean', { p1: 'a', p2: 'ice' }).then((j) => {
-      assert.equal(j.player1.valid, false);
-      assert.equal(j.player1.complexity, 0);
-      assert.equal(j.roundWinner, 'p2');
-    });
+    const j = stubJudgment('ocean', { p1: 'a', p2: 'ice' });
+    assert.equal(j.player1.valid, false);
+    assert.equal(j.player1.complexity, 0);
+    assert.equal(j.roundWinner, 'p2');
   });
 
-  it('equal valid lengths tie → null roundWinner (sudden death)', async () => {
-    const j = await judgeRound('water', { p1: 'rain', p2: 'lake' });
+  it('equal valid lengths tie → null roundWinner (sudden death)', () => {
+    const j = stubJudgment('water', { p1: 'rain', p2: 'lake' });
     assert.equal(j.roundWinner, null);
   });
 
-  it('both invalid tie → null roundWinner', async () => {
-    const j = await judgeRound('water', { p1: 'z', p2: 'q' });
+  it('both invalid tie → null roundWinner', () => {
+    const j = stubJudgment('water', { p1: 'z', p2: 'q' });
     assert.equal(j.roundWinner, null);
   });
 });

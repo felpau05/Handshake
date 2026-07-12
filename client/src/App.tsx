@@ -41,37 +41,23 @@ export default function App() {
         </div>
       )}
 
-      {phase === 'STAKE' && (
-        <div className="grid-2">
-          <StakeSetup />
-          <VoicePlayer />
-        </div>
-      )}
+      {/* Rendered once, outside the per-phase branches below: mounting a fresh
+          VoicePlayer inside every phase's own block destroyed its <audio>
+          element (and the "already played" tracking) on every single phase
+          transition, cutting narration off mid-sentence and replaying stale
+          lines. One persistent instance across STAKE→MATCH_END fixes both. */}
+      {phase !== 'LOBBY' && <VoicePlayer />}
 
-      {phase === 'PROMPT' && (
-        <>
-          <VoicePlayer />
-          <PromptReveal />
-        </>
-      )}
+      {phase === 'STAKE' && <StakeSetup />}
 
-      {phase === 'SPELL' && (
-        <>
-          <VoicePlayer />
-          <SpellArena />
-        </>
-      )}
+      {phase === 'PROMPT' && <PromptReveal />}
 
-      {phase === 'RESOLVE' && (
-        <>
-          <VoicePlayer />
-          <ResultView />
-        </>
-      )}
+      {phase === 'SPELL' && <SpellArena />}
+
+      {phase === 'RESOLVE' && <ResultView />}
 
       {phase === 'MATCH_END' && (
         <>
-          <VoicePlayer />
           <div className="grid-2">
             <WinnerPhotoCapture
               isWinner={amWinner}

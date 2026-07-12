@@ -17,6 +17,15 @@ const schema = z.object({
   GEMINI_MODEL: z.string().default('gemini-2.5-flash'),
   GEMINI_IMAGE_MODEL: z.string().default('gemini-2.5-flash-image'),
   STUB_IMAGE_GEN: boolish,
+  /** Route Gemini calls through Vertex AI (rebranded "Gemini Enterprise Agent
+   *  Platform") instead of the plain Developer API. This bills through normal
+   *  Cloud billing/credits, not the Developer API's separate prepay wallet.
+   *  Needs Application Default Credentials — `gcloud auth application-default
+   *  login`, or GOOGLE_APPLICATION_CREDENTIALS pointing at a service-account
+   *  key file — NOT a GEMINI_API_KEY. */
+  GEMINI_USE_VERTEX: boolish,
+  GEMINI_VERTEX_PROJECT: z.string().optional(),
+  GEMINI_VERTEX_LOCATION: z.string().default('us-central1'),
 
   ELEVENLABS_API_KEY: z.string().optional(),
   ELEVENLABS_VOICE_ID: z.string().optional(),
@@ -54,11 +63,16 @@ if (env.AUTH_JWT_SECRET === 'dev-insecure-secret-change-me') {
   console.warn('[env] AUTH_JWT_SECRET is unset — using an insecure dev default. Set it in server/.env before any real deploy.');
 }
 
+/** True once Gemini has SOME usable credential, whichever backend it's for. */
+const geminiConfigured = env.GEMINI_USE_VERTEX
+  ? Boolean(env.GEMINI_VERTEX_PROJECT)
+  : Boolean(env.GEMINI_API_KEY);
+
 /** Handy booleans for "is this service wired for real?" */
 export const features = {
-  gemini: Boolean(env.GEMINI_API_KEY),
+  gemini: geminiConfigured,
   elevenlabs: Boolean(env.ELEVENLABS_API_KEY && env.ELEVENLABS_VOICE_ID),
-  imageGen: !env.STUB_IMAGE_GEN && Boolean(env.GEMINI_API_KEY),
+  imageGen: !env.STUB_IMAGE_GEN && geminiConfigured,
   mongo: Boolean(env.MONGODB_URI),
   solana: env.USE_REAL_SOLANA && Boolean(env.SOLANA_RPC_URL) && Boolean(env.SOLANA_KEYPAIR_PATH3),
 };
