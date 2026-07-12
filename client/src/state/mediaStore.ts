@@ -69,10 +69,18 @@ export const useMediaStore = create<MediaStore>((set, get) => ({
       // 0.75/500ms (was 0.85/600ms): the higher bar meant players whose hands
       // the model knows less well never got a letter to commit at all —
       // slightly more misreads is a far better failure mode than silence.
+      // wasmPath/handModelPath point at LOCAL copies (client/public/) instead
+      // of the library defaults (jsdelivr CDN + Google Cloud Storage). Those
+      // CDN fetches ran on every page load with no caching benefit across a
+      // slow venue wifi / ngrok tunnel — a multi-second-to-tens-of-seconds
+      // hit on top of the shader warmup. Now it's all same-origin, so a
+      // browser HTTP cache actually helps on repeat loads too.
       const detector = createAslDetector({
         minConfidence: 0.75,
         holdMs: 500,
         modelUrl: '/asl-model/model.json',
+        wasmPath: '/mediapipe-wasm',
+        handModelPath: '/asl-model/hand_landmarker.task',
       });
       try {
         await detector.init();

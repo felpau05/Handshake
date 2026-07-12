@@ -67,7 +67,13 @@ async function main(): Promise<void> {
     capturesEl.prepend(fig);
   }
 
-  const detector = createAslDetector({ minConfidence: 0.75, holdMs: 500 });
+  // Local paths, not the library's CDN defaults — see collect.ts for why.
+  const detector = createAslDetector({
+    minConfidence: 0.75,
+    holdMs: 500,
+    wasmPath: '/mediapipe-wasm',
+    handModelPath: '/model/hand_landmarker.task',
+  });
   await detector.init();
   detector.attachVideo(video);
   const eventsEl = document.getElementById('events')!;

@@ -174,7 +174,10 @@ async function main(): Promise<void> {
   video.srcObject = stream;
   await video.play();
 
-  const extractor = new HandLandmarkExtractor();
+  // Local paths, not the library's CDN defaults (jsdelivr + Google Cloud
+  // Storage) — those re-download ~19MB on every page load with no caching
+  // win, which is exactly what makes this tool feel slow to open.
+  const extractor = new HandLandmarkExtractor('/mediapipe-wasm', '/model/hand_landmarker.task');
   await extractor.init();
   hintEl.textContent = 'Ready — press a letter key.';
   render();
