@@ -29,6 +29,11 @@ const PROMPT_QUEUE_TARGET = 5;
 const RESULT_PAUSE_MS = 3_500;
 // After this many consecutive ties, force a decision so a match always ends.
 const MAX_SUDDEN_DEATH = 3;
+// How long the room will hold PROMPT open waiting for both clients to report
+// their camera + ASL model warm (SPELL_READY) before starting the spell timer
+// anyway. A cap, not a wait-forever: a crashed client (or one falling back to
+// keyboard entry, which never sends the signal) can't hold the match hostage.
+const SPELL_READY_MAX_WAIT_MS = 8_000;
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -92,6 +97,11 @@ export class GameRoom {
   private players: Record<PlayerSlot, PlayerState | null> = { p1: null, p2: null };
   private usedPrompts: string[] = [];
   private timer: NodeJS.Timeout | null = null;
+  /** Which players have reported camera + ASL model warm this round. */
+  private spellReady: Record<PlayerSlot, boolean> = { p1: false, p2: false };
+  /** True only during the post-narration hold in startPrompt — the window in
+   *  which a SPELL_READY signal is allowed to trigger the SPELL transition. */
+  private awaitingSpellReady = false;
   /** Pre-generated prompt reveals (theme + Gemini banter + ElevenLabs audio),
    *  consumed in order by startPrompt(). Filled as soon as both players join
    *  (see addPlayer) and topped back up after each consumption, so a round —
@@ -151,9 +161,18 @@ export class GameRoom {
   }
 
   /** Fully vacate a slot when a player leaves (e.g. post-game "back to lobby").
-   *  Cancels any pending phase timer so an abandoned room can't fire callbacks. */
+   *  Cancels any pending phase timer so an abandoned room can't fire callbacks.
+   *  Leaving MID-MATCH forfeits: the remaining player wins immediately instead
+   *  of being stranded in a phase whose timers were just cancelled. */
   removePlayer(slot: PlayerSlot): void {
     this.clearTimer();
+    const leaver = this.players[slot];
+    const otherSlot: PlayerSlot = slot === 'p1' ? 'p2' : 'p1';
+    const other = this.players[otherSlot];
+    if (leaver && other && this.phase !== 'LOBBY' && this.phase !== 'MATCH_END') {
+      console.log(`[GameRoom ${this.roomCode}] ${leaver.displayName} left mid-match -> ${other.displayName} wins by forfeit`);
+      this.endMatch(otherSlot); // leaver still occupies the slot here, so settlement sees both players
+    }
     this.players[slot] = null;
     this.broadcast();
   }
@@ -268,6 +287,7 @@ export class GameRoom {
     this.clearTimer();
     if (this.phase === 'MATCH_END') return;
     this.suddenDeath = suddenDeath;
+    this.spellReady = { p1: false, p2: false };
     for (const p of this.eachPlayer()) {
       p.submittedWord = null;
       p.wordValid = null;
@@ -309,6 +329,28 @@ export class GameRoom {
     await sleep(estimateSpeechMs(line));
     if (this.phase !== 'PROMPT') return; // room was reset/abandoned meanwhile
 
+    // Hold here until both clients report their camera + ASL model warm —
+    // otherwise the spell timer burns down while a slower machine is still
+    // initializing detection. Capped so nobody can stall the match.
+    if (this.spellReady.p1 && this.spellReady.p2) return this.beginSpell();
+    this.awaitingSpellReady = true;
+    console.log(`[GameRoom ${this.roomCode}] PROMPT done — waiting for both detectors (max ${SPELL_READY_MAX_WAIT_MS}ms)`);
+    this.armTimer(() => this.beginSpell(), SPELL_READY_MAX_WAIT_MS);
+  }
+
+  /** A client reports its camera + ASL detector are loaded for this round. */
+  setSpellReady(slot: PlayerSlot): void {
+    if (!this.players[slot]) return;
+    this.spellReady[slot] = true;
+    if (this.awaitingSpellReady && this.spellReady.p1 && this.spellReady.p2) {
+      console.log(`[GameRoom ${this.roomCode}] both detectors ready -> opening SPELL early`);
+      this.beginSpell();
+    }
+  }
+
+  private beginSpell(): void {
+    if (this.phase !== 'PROMPT') return; // forfeit/reset happened during the wait
+    this.awaitingSpellReady = false;
     console.log(`[GameRoom ${this.roomCode}] PROMPT -> SPELL (submission window opens)`);
     this.setPhase('SPELL', SPELL_DURATION_MS);
     this.armTimer(() => void this.resolve(), SPELL_DURATION_MS);
@@ -325,7 +367,13 @@ export class GameRoom {
     p.submittedWord = word;
     this.broadcast();
     console.log(`[GameRoom ${this.roomCode}] ${p.displayName} submitted "${word}"`);
-    if (this.players.p1?.submittedWord !== null && this.players.p2?.submittedWord !== null) {
+    // Both players must EXIST and have submitted. `players.p2?.submittedWord
+    // !== null` alone is true for a vacated slot (undefined !== null), which
+    // used to fire resolve() into a null player and crash the process.
+    if (
+      this.players.p1 && this.players.p2 &&
+      this.players.p1.submittedWord !== null && this.players.p2.submittedWord !== null
+    ) {
       void this.resolve();
     }
     return {};
@@ -353,8 +401,12 @@ export class GameRoom {
       this.cb.broadcastNarration(filler.text, filler.audioUrl);
     }
 
-    const p1 = this.players.p1!;
-    const p2 = this.players.p2!;
+    // A player may have left during the filler-narration await above (their
+    // slot is nulled) — bail instead of dereferencing null; removePlayer's
+    // forfeit path already ended the match for whoever remains.
+    const p1 = this.players.p1;
+    const p2 = this.players.p2;
+    if (!p1 || !p2) return;
     const words: Record<PlayerSlot, string | null> = {
       p1: p1.submittedWord,
       p2: p2.submittedWord,
@@ -366,6 +418,11 @@ export class GameRoom {
       prompt: this.prompt!,
       words,
     });
+    // The judge call takes seconds — a forfeit may have ended the match
+    // meanwhile. Don't broadcast a result or arm end-timers on top of it.
+    // (Cast: TS still has `phase` narrowed to 'SPELL' from the entry guard
+    // and can't see that setPhase() reassigned it.)
+    if ((this.phase as GamePhase) !== 'RESOLVE') return;
     p1.wordValid = outcomes.p1.valid;
     p2.wordValid = outcomes.p2.valid;
 

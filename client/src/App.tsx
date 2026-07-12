@@ -1,9 +1,10 @@
 // Top-level app. Wires the socket, then renders the right view for the current
 // server phase. State always comes from the server (the store mirrors it), so
 // both laptops render the same thing.
-import { useState } from 'react';
-import { useSocket, leaveMatch } from './hooks/useSocket.js';
+import { useEffect, useState } from 'react';
+import { useSocket, leaveMatch, sendSpellReady } from './hooks/useSocket.js';
 import { useGameStore } from './state/gameStore.js';
+import { useMediaStore } from './state/mediaStore.js';
 import { Lobby } from './components/Lobby.js';
 import { StakeSetup } from './components/StakeSetup.js';
 import { PromptReveal } from './components/PromptReveal.js';
@@ -23,6 +24,15 @@ export default function App() {
   const opponent = useGameStore((s) => s.opponent());
   const phase = match?.phase ?? 'LOBBY';
   const iWon = match?.matchWinner === mySlot;
+
+  // During PROMPT the server holds the spell timer until both players report
+  // camera + ASL model warm. Re-fires each round (phase re-enters PROMPT) and
+  // also the moment a slow-loading detector finally comes up mid-PROMPT.
+  const detectorReady = useMediaStore((s) => s.detectorReady);
+  const cameraStatus = useMediaStore((s) => s.cameraStatus);
+  useEffect(() => {
+    if (phase === 'PROMPT' && detectorReady && cameraStatus === 'ready') sendSpellReady();
+  }, [phase, detectorReady, cameraStatus]);
 
   return (
     <div className="app">

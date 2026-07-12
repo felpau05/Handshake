@@ -1,7 +1,7 @@
 // Entry screen: create a match (get a room code) or join one by code. Once two
 // players are in, each readies up to start the match.
 import { useState } from 'react';
-import { createMatch, joinMatch, setReady } from '../hooks/useSocket.js';
+import { createMatch, joinMatch, setReady, leaveMatch } from '../hooks/useSocket.js';
 import { useGameStore } from '../state/gameStore.js';
 import { useAuthStore } from '../state/authStore.js';
 
@@ -60,14 +60,16 @@ export function Lobby() {
           <strong>{opponent?.displayName ?? 'waiting…'}</strong> {opponent?.ready ? '✓ ready' : ''}
         </div>
       </div>
-      <button
-        className="primary"
-        style={{ marginTop: '0.75rem' }}
-        disabled={!opponent || me?.ready}
-        onClick={() => setReady(true)}
-      >
-        {me?.ready ? 'Waiting for opponent…' : "I'm ready"}
-      </button>
+      <div className="row" style={{ marginTop: '0.75rem' }}>
+        <button
+          className="primary"
+          disabled={!opponent || me?.ready}
+          onClick={() => setReady(true)}
+        >
+          {me?.ready ? 'Waiting for opponent…' : "I'm ready"}
+        </button>
+        <button onClick={() => leaveMatch()}>← Leave</button>
+      </div>
       {!opponent && <p className="muted">Waiting for a second player to join {match?.roomCode}…</p>}
     </div>
   );

@@ -2,6 +2,16 @@
 // server manages — this store just mirrors the logged-in user's public profile
 // (never a token) so components can render around it.
 import { create } from 'zustand';
+import { socket } from '../lib/socket.js';
+
+// The server reads the session cookie from the socket.io HANDSHAKE, not per
+// event — a socket opened before login stays anonymous even after the cookie
+// is set. Any auth change must force a fresh handshake, or the user hits
+// "Log in before starting a match" until they hard-refresh the page.
+function reconnectSocket(): void {
+  socket.disconnect();
+  socket.connect();
+}
 
 export interface AuthUser {
   id: string;
@@ -61,6 +71,7 @@ export const useAuthStore = create<AuthStore>((set, get) => ({
       });
       const data = await parseJsonOrThrow(res);
       set({ user: data.user, status: 'authenticated' });
+      reconnectSocket();
       void get().fetchBalance();
     } catch (err) {
       set({ error: err instanceof Error ? err.message : 'Login failed.' });
@@ -79,6 +90,7 @@ export const useAuthStore = create<AuthStore>((set, get) => ({
       });
       const data = await parseJsonOrThrow(res);
       set({ user: data.user, status: 'authenticated' });
+      reconnectSocket();
       void get().fetchBalance();
     } catch (err) {
       set({ error: err instanceof Error ? err.message : 'Registration failed.' });
@@ -89,6 +101,7 @@ export const useAuthStore = create<AuthStore>((set, get) => ({
   logout: async () => {
     await fetch('/api/auth/logout', { method: 'POST', credentials: 'include' });
     set({ user: null, status: 'anonymous', walletBalanceSol: null });
+    reconnectSocket();
   },
 
   fetchBalance: async () => {

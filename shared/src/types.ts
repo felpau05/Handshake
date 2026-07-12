@@ -97,6 +97,7 @@ export const SocketEvents = {
   SET_STAKE: 'set_stake',
   SUBMIT_WORD: 'submit_word',
   SPELL_PROGRESS: 'spell_progress', // optional: live word length for the opponent
+  SPELL_READY: 'spell_ready', // client's camera + ASL model are warm; SPELL timer waits for both
   LEAVE_MATCH: 'leave_match', // leave the current room and return to the lobby
 
   // server → client

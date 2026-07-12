@@ -59,11 +59,16 @@ export function SpellArena() {
     let unsubFrame: (() => void) | null = null;
     const canvas = canvasRef.current;
     if (canvas) {
-      canvas.width = video.videoWidth;
-      canvas.height = video.videoHeight;
       const ctx = canvas.getContext('2d')!;
       drawerRef.current = new DrawingUtils(ctx);
       unsubFrame = detector.on('frame', (f) => {
+        // Size the canvas here, not at mount: videoWidth is 0 until the
+        // stream's metadata loads, and a canvas sized 0×0 then would never
+        // show the overlay (a race we lose on slower machines).
+        if (video.videoWidth && canvas.width !== video.videoWidth) {
+          canvas.width = video.videoWidth;
+          canvas.height = video.videoHeight;
+        }
         ctx.clearRect(0, 0, canvas.width, canvas.height);
         if (f.landmarks) {
           const color = f.confidence >= 0.85 ? '#22c55e' : '#f59e0b';
@@ -116,14 +121,17 @@ export function SpellArena() {
   // identical to a real one. Now it waits for the server's real answer and
   // only locks in on confirmed success; on failure it un-submits and shows
   // why, so the player can just hit the button again.
-  const doSubmit = async () => {
+  const doSubmit = async (auto = false) => {
     if (submitted || submitting) return;
     setSubmitting(true);
     setSubmitError(null);
     const ack = await submitWord(word);
     setSubmitting(false);
     if (ack.error) {
-      setSubmitError(ack.error);
+      // On the auto-submit at timeout, "window closed" just means the server's
+      // own deadline beat our packet — the round is over either way; showing a
+      // red "try again" for a window that no longer exists is only confusing.
+      if (!auto) setSubmitError(ack.error);
       return;
     }
     setSubmitted(true);
@@ -135,7 +143,7 @@ export function SpellArena() {
         <h3>
           Prompt: <span style={{ color: 'var(--accent)' }}>{prompt}</span>
         </h3>
-        <Countdown deadline={deadline} onExpire={doSubmit} />
+        <Countdown deadline={deadline} onExpire={() => doSubmit(true)} />
       </div>
 
       <div className="camera-wrap">
@@ -156,7 +164,7 @@ export function SpellArena() {
 
       <div className="gesture-buttons">
         <button onClick={deleteLast} disabled={submitted || submitting || !word}>⌫ Delete (wave / Backspace)</button>
-        <button className="primary" onClick={doSubmit} disabled={submitted || submitting}>
+        <button className="primary" onClick={() => doSubmit()} disabled={submitted || submitting}>
           {submitted ? 'Submitted ✓' : submitting ? 'Submitting…' : 'Submit word'}
         </button>
       </div>
@@ -195,7 +203,10 @@ function Countdown({ deadline, onExpire }: { deadline: number | null; onExpire: 
     const tick = () => {
       const s = Math.max(0, Math.ceil((deadline - Date.now()) / 1000));
       setLeft(s);
-      if (s <= 0 && !firedRef.current) {
+      // Fire 1s BEFORE the deadline: the auto-submit races the server's own
+      // timeout timer, and firing at exactly 0 loses that race over any real
+      // network (the word arrives after RESOLVE started and is dropped).
+      if (s <= 1 && !firedRef.current) {
         firedRef.current = true;
         onExpire();
       }

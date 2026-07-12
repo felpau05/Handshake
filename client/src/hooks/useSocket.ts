@@ -86,6 +86,12 @@ export function sendSpellProgress(length: number): void {
   socket.emit(SocketEvents.SPELL_PROGRESS, { length });
 }
 
+/** Tell the server this client's camera + ASL model are warm — the server
+ *  holds the SPELL timer until both players have said so (or its cap fires). */
+export function sendSpellReady(): void {
+  socket.emit(SocketEvents.SPELL_READY);
+}
+
 /** Leave the current room and reset local match state → back to the lobby. */
 export function leaveMatch(): void {
   socket.emit(SocketEvents.LEAVE_MATCH);

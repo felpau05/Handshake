@@ -72,6 +72,10 @@ export function registerSocketHandlers(io: Server): void {
       if (res?.error) emitError(socket, 'STAKE_REJECTED', res.error);
     });
 
+    socket.on(SocketEvents.SPELL_READY, () => {
+      metaRoom(meta)?.setSpellReady(meta!.slot);
+    });
+
     socket.on(SocketEvents.SUBMIT_WORD, (payload: SubmitWordPayload, ack?: Function) => {
       const room = metaRoom(meta);
       const res = room ? room.submitWord(meta!.slot, payload.word ?? '') : { error: 'Not in a match.' };
